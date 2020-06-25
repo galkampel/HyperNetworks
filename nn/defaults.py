@@ -1,7 +1,7 @@
 import tensorflow as tf
-from tensorflow.contrib import layers
+# from tensorflow.contrib import layers
 
-datadir = "/tmp/"
+DATADIR = "/home/galkampel/tmp/"
 
 
 def sh_softplus(x):

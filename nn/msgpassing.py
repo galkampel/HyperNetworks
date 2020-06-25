@@ -2,23 +2,21 @@ import sys
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
 import tensorflow as tf
 import os
+
+from matplotlib.colors import to_rgb
+
 import msgnet
 from tensorflow.contrib import layers
 
 
-def compute_messages(
-    nodes,
-    conn,
-    edges,
-    message_fn,
-    act_fn,
-    include_receiver=True,
-    include_sender=True,
-    only_messages=False,
-    mean_messages=True,
-):
+def compute_messages(nodes, conn, edges, message_fn, act_fn,
+                     include_receiver=True, include_sender=True,
+                     only_messages=False, mean_messages=True,
+                     ):
     """
     :param nodes: (n_nodes, n_node_features) tensor of nodes, float32.
     :param conn: (n_edges, 2) tensor of indices indicating an edge between nodes at those indices, [from, to] int32.
@@ -31,19 +29,22 @@ def compute_messages(
     :param mean_messages: If true compute average over messages (instead of sum)
     :return: (n_edges, n_output) if only_messages is True, otherwise (n_nodes, n_output) Sum of messages arriving at each node.
     """
-    n_nodes = tf.shape(nodes)[0]
-    n_node_features = nodes.get_shape()[1].value
-    n_edge_features = edges.get_shape()[1].value
+    n_nodes, n_node_features = nodes.size()
+    # n_edge_features = edges.get_shape()[1].value
 
     if include_receiver and include_sender:
         # Use both receiver and sender node features in message computation
         message_inputs = tf.gather(nodes, conn)  # n_edges, 2, n_node_features
-        reshaped = tf.reshape(message_inputs, (-1, 2 * n_node_features))
+        message_inputs = torch.gather(nodes, index=conn)  #  dim=0?     n_edges, 2, n_node_features
+        # reshaped = tf.reshape(message_inputs, (-1, 2 * n_node_features))
+        reshaped = message_inputs.view(-1, 2 * n_node_features)
     elif include_sender:  # Only use sender node features (index=0)
-        message_inputs = tf.gather(nodes, conn[:, 0])  # n_edges, n_node_features
+        # message_inputs = tf.gather(nodes, conn[:, 0])  # n_edges, n_node_features
+        message_inputs = torch.gather(nodes, index=conn[:, 0])  # n_edges, n_node_features
         reshaped = message_inputs
     elif include_receiver:  # Only use receiver node features (index=1)
-        message_inputs = tf.gather(nodes, conn[:, 1])  # n_edges, n_node_features
+        # message_inputs = tf.gather(nodes, conn[:, 1])  # n_edges, n_node_features
+        message_inputs = torch.gather(nodes, index=conn[:, 1])  # n_edges, n_node_features
         reshaped = message_inputs
     else:
         raise ValueError(
@@ -57,58 +58,63 @@ def compute_messages(
     idx_dest = conn[:, 1]
     if mean_messages:
         # tf.bincount not supported on GPU in TF 1.4, so do this instead
-        count = tf.unsorted_segment_sum(
-            tf.ones_like(idx_dest, dtype=tf.float32), idx_dest, n_nodes
-        )
-        count = tf.maximum(count, 1)  # Avoid division by zero
-        msg_pool = tf.unsorted_segment_sum(
-            messages, idx_dest, n_nodes
-        ) / tf.expand_dims(count, -1)
+        # count = tf.unsorted_segment_sum(
+        #     tf.ones_like(idx_dest, dtype=tf.float32), idx_dest, n_nodes
+        # )
+        # count = tf.maximum(count, 1)  # Avoid division by zero
+        # msg_pool = tf.unsorted_segment_sum(
+        #     messages, idx_dest, n_nodes
+        # ) / tf.expand_dims(count, -1)
+
+        count = torch.scatter_add(torch.ones_like(idx_dest, dtype=torch.FloatTensor), idx_dest)
+        count = torch.max(count, 1)
+        msg_pool = torch.scatter_add(messages, idx_dest) / torch.unsqueeze(count, -1)
     else:
-        msg_pool = tf.unsorted_segment_sum(messages, idx_dest, n_nodes)
+        # msg_pool = tf.unsorted_segment_sum(messages, idx_dest, n_nodes)
+        msg_pool = torch.scatter_add(messages, idx_dest)
     return act_fn(msg_pool)
 
 
-def create_dtnn_msg_function(num_outputs, num_hidden_neurons, **kwargs):
-    """create_dtnn_msg_function
-    Creates the message function from Deep Tensor Neural Networks (DTNN)
-
-    :param num_outputs: output dimension
-    :param num_hidden_neurons: number of hidden units
-    :param **kwargs:
-    """
-
-    def func(nodes, edges):
-        num_node_features = nodes.get_shape()[1].value
-        num_edge_features = edges.get_shape()[1].value
-        Wcf = tf.get_variable(
-            "W_atom_c",
-            (num_node_features, num_hidden_neurons),
-            initializer=layers.xavier_initializer(False),
-        )
-        bcf = tf.get_variable(
-            "b_atom_c", (num_hidden_neurons,), initializer=tf.constant_initializer(0)
-        )
-        Wdf = tf.get_variable(
-            "W_dist",
-            (num_edge_features, num_hidden_neurons),
-            initializer=layers.xavier_initializer(False),
-        )
-        bdf = tf.get_variable(
-            "b_dist", (num_hidden_neurons,), initializer=tf.constant_initializer(0)
-        )
-        Wfc = tf.get_variable(
-            "W_hidden_to_c",
-            (num_hidden_neurons, num_node_features),
-            initializer=layers.xavier_initializer(False),
-        )
-
-        term1 = tf.matmul(nodes, Wcf) + bcf
-        term2 = tf.matmul(edges, Wdf) + bdf
-        output = tf.tanh(tf.matmul(term1 * term2, Wfc))
-        return output
-
-    return func
+# def create_dtnn_msg_function(num_outputs, num_hidden_neurons, **kwargs):
+#     """create_dtnn_msg_function
+#     Creates the message function from Deep Tensor Neural Networks (DTNN)
+#
+#     :param num_outputs: output dimension
+#     :param num_hidden_neurons: number of hidden units
+#     :param **kwargs:
+#     """
+#
+#     def func(nodes, edges):
+#         num_node_features = nodes.get_shape()[1].value
+#         num_edge_features = edges.get_shape()[1].value
+#         Wcf = tf.get_variable(
+#             "W_atom_c",
+#             (num_node_features, num_hidden_neurons),
+#             initializer=layers.xavier_initializer(False),
+#         )
+#         bcf = tf.get_variable(
+#             "b_atom_c", (num_hidden_neurons,), initializer=tf.constant_initializer(0)
+#         )
+#         Wdf = tf.get_variable(
+#             "W_dist",
+#             (num_edge_features, num_hidden_neurons),
+#             initializer=layers.xavier_initializer(False),
+#         )
+#         bdf = tf.get_variable(
+#             "b_dist", (num_hidden_neurons,), initializer=tf.constant_initializer(0)
+#         )
+#         Wfc = tf.get_variable(
+#             "W_hidden_to_c",
+#             (num_hidden_neurons, num_node_features),
+#             initializer=layers.xavier_initializer(False),
+#         )
+#
+#         term1 = tf.matmul(nodes, Wcf) + bcf
+#         term2 = tf.matmul(edges, Wdf) + bdf
+#         output = tf.tanh(tf.matmul(term1 * term2, Wfc))
+#         return output
+#
+#     return func
 
 
 def create_msg_function(num_outputs, **kwargs):
@@ -199,30 +205,30 @@ class MsgpassingNetwork:
         """
 
         # Symbolic input variables
-        if embedding_shape is not None:
-            self.sym_nodes = tf.placeholder(np.int32, shape=(None,), name="sym_nodes")
-        else:
-            self.sym_nodes = tf.placeholder(
-                np.float32, shape=(None, n_node_features), name="sym_nodes"
-            )
-        self.sym_edges = tf.placeholder(
-            np.float32, shape=(None, n_edge_features), name="sym_edges"
-        )
+        # if embedding_shape is not None:
+        #     self.sym_nodes = tf.placeholder(np.int32, shape=(None,), name="sym_nodes")
+        # else:
+        #     self.sym_nodes = tf.placeholder(
+        #         np.float32, shape=(None, n_node_features), name="sym_nodes"
+        #     )
+        # self.sym_edges = tf.placeholder(
+        #     np.float32, shape=(None, n_edge_features), name="sym_edges"
+        # )
         self.readout_fn = readout_fn
         self.edge_output_fn = edge_output_fn
-        self.sym_conn = tf.placeholder(np.int32, shape=(None, 2), name="sym_conn")
-        self.sym_segments = tf.placeholder(
-            np.int32, shape=(None,), name="sym_segments_map"
-        )
-        self.sym_set_len = tf.placeholder(np.int32, shape=(None,), name="sym_set_len")
+        # self.sym_conn = tf.placeholder(np.int32, shape=(None, 2), name="sym_conn")
+        # self.sym_segments = tf.placeholder(
+        #     np.int32, shape=(None,), name="sym_segments_map"
+        # )
+        # self.sym_set_len = tf.placeholder(np.int32, shape=(None,), name="sym_set_len")
 
-        self.input_symbols = {
-            "nodes": self.sym_nodes,
-            "edges": self.sym_edges,
-            "connections": self.sym_conn,
-            "segments": self.sym_segments,
-            "set_lengths": self.sym_set_len,
-        }
+        # self.input_symbols = {
+        #     "nodes": self.sym_nodes,
+        #     "edges": self.sym_edges,
+        #     "connections": self.sym_conn,
+        #     "segments": self.sym_segments,
+        #     "set_lengths": self.sym_set_len,
+        # }
 
         # Setup constants for normalizing/denormalizing graph level outputs
         self.sym_target_mean = tf.get_variable(
@@ -248,6 +254,7 @@ class MsgpassingNetwork:
             init_edges = self.sym_edges
 
         if embedding_shape is not None:
+            self.species_embeddings = nn.Embedding(*embedding_shape)
             # Setup embedding matrix
             stddev = np.sqrt(1.0 / np.sqrt(embedding_shape[1]))
             self.species_embedding = tf.Variable(

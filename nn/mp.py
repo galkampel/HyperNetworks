@@ -10,11 +10,11 @@ def shifted_softplus(x):
 
 
 class Message(nn.Module):
-    def __init__(self, w1_in, w1_out, w2_in, w2_out, w3_in, w3_out, T=4):
+    def __init__(self, C=64, T=4):
         super(Message, self).__init__()
-        self.W1s = [nn.Linear(w1_in, w1_out) for _ in range(T)]
-        self.W2s = [nn.Linear(w2_in, w2_out) for _ in range(T)]
-        self.W3s = [nn.Linear(w3_in, w3_out) for _ in range(T)]
+        self.W1s = [nn.Linear(C, C) for _ in range(T)]
+        self.W2s = [nn.Linear(C, C) for _ in range(T)]
+        self.W3s = [nn.Linear(C, C) for _ in range(T)]
 
     def get_filter(self, e_vw, t):
         flter = self.W2s[t](e_vw)
@@ -31,10 +31,10 @@ class Message(nn.Module):
 
 
 class StateTransition(nn.Module):
-    def __init__(self, w4_in, w4_out, w5_in, w5_out, T=4):
+    def __init__(self, C=64, T=4):
         super(StateTransition, self).__init__()
-        self.W4s = [nn.Linear(w4_in, w4_out) for _ in range(T)]
-        self.W5s = [nn.Linear(w5_in, w5_out) for _ in range(T)]
+        self.W4s = [nn.Linear(C, C) for _ in range(T)]
+        self.W5s = [nn.Linear(C, C) for _ in range(T)]
 
     def forward(self, h_v, m_v, t):  # h_v and m_v^{t+1} as inputs
         x = self.W4s[t](m_v)
@@ -45,10 +45,10 @@ class StateTransition(nn.Module):
 
 
 class Readout(nn.Module):
-    def __init__(self, w6_in, w6_out, w7_in, w7_out):
+    def __init__(self, C=64):
         super(Readout, self).__init__()
-        self.W6 = nn.Linear(w6_in, w6_out)
-        self.W7 = nn.Linear(w7_in, w7_out)
+        self.W6 = nn.Linear(C, C // 2)
+        self.W7 = nn.Linear(C // 2, 1)
 
     def forward(self, h):
         x = self.W6(h.T)
@@ -58,10 +58,10 @@ class Readout(nn.Module):
 
 
 class Edge(nn.Module):
-    def __init__(self, w6_in, w6_out, w7_in, w7_out):
+    def __init__(self, C):
         super(Readout, self).__init__()
-        self.W6 = nn.Linear(w6_in, w6_out)
-        self.W7 = nn.Linear(w7_in, w7_out)
+        self.W6 = nn.Linear(3 * C, 2 * C)
+        self.W7 = nn.Linear(2 * C, C)
 
     def forward(self, h):
         x = self.W6(h.T)
