@@ -7,7 +7,8 @@ import ase.data
 # import msgnet
 import tarfile
 import requests
-from .dataloader import DATADIR
+
+DATADIR = "/home/galkampel/tmp/"
 
 
 def string_convert(string):

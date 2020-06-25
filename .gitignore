@@ -116,4 +116,6 @@ pip-selfcheck.json
 *.wmv
 
 /msgnet
+playground.py
+
 # End of https://www.toptal.com/developers/gitignore/api/venv,pycharm+all,video

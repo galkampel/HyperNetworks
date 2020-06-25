@@ -15,7 +15,7 @@ from ase.neighborlist import NeighborList
 # import msgnet
 
 
-DATADIR = "/tmp/"
+DATADIR = "/home/galkampel/tmp/"
 
 class DataLoader:
     default_target = None
