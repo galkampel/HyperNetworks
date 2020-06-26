@@ -74,8 +74,8 @@ class NMPEdge(torch.nn.Module):
             (default: :obj:`10.0`)
         readout (string, optional): Whether to apply :obj:`"add"` or
             :obj:`"mean"` global aggregation. (default: :obj:`"add"`)
-        state_hyper (bool, optionl): If true use hyperNetwork for the
-            state-transition phase (https://arxiv.org/pdf/2002.00240.pdf)
+        hypernet_update (bool, optionl): If true use hyperNetwork for the
+            state-transition function (https://arxiv.org/pdf/2002.00240.pdf)
         dipole (bool, optional): If set to :obj:`True`, will use the magnitude
             of the dipole moment to make the final prediction, *e.g.*, for
             target 0 of :class:`torch_geometric.datasets.QM9`.
@@ -91,15 +91,15 @@ class NMPEdge(torch.nn.Module):
 
     url = 'http://www.quantum-machine.org/datasets/trained_schnet_models.zip'
 
-    def __init__(self, embed_size=256, hidden_channels=128, num_filters=128, num_interactions=4,
-                 num_gaussians=150, cutoff=15.0, readout='add', state_hyper=False,
+    def __init__(self, num_embeddings=100, hidden_channels=256, num_filters=256, num_interactions=4,
+                 num_gaussians=150, cutoff=15.0, readout='add', hypernet_update=False, device='cpu',
                  dipole=False, mean=None, std=None, atomref=None):
         super(NMPEdge, self).__init__()
 
         assert readout in ['add', 'sum', 'mean']
 
         self.hidden_channels = hidden_channels
-        self.embed_size = embed_size
+        self.num_embeddings = num_embeddings
         self.num_filters = num_filters
         self.num_interactions = num_interactions
         self.num_gaussians = num_gaussians
@@ -110,42 +110,64 @@ class NMPEdge(torch.nn.Module):
         self.mean = mean
         self.std = std
         self.scale = None
-        self.state_hyper = state_hyper
-
+        self.hypernet_update = hypernet_update
+        self.device = device
         atomic_mass = torch.from_numpy(ase.data.atomic_masses)
         self.register_buffer('atomic_mass', atomic_mass)
 
-        self.embedding = nn.Embedding(embed_size, hidden_channels) # 256 instead of 100?
+        self.embedding = nn.Embedding(num_embeddings, hidden_channels)  # 256 instead of 100?
         self.distance_expansion = GaussianSmearing(0.0, cutoff, num_gaussians)
-        self.edge_updates = nn.ModuleList()
-        edge_net0 = EdgeUpdate(num_gaussians + 2 * hidden_channels, hidden_channels)
-        self.edge_updates.append(edge_net0)
-        for _ in range(num_interactions - 1):
-            edge_net = EdgeUpdate(3 * hidden_channels, hidden_channels)
-            self.edge_updates.append(edge_net)
-        self.interactions = nn.ModuleList()
-        for _ in range(num_interactions):
-            block = InteractionBlock(hidden_channels, hidden_channels, self.state_hyper)
-            self.interactions.append(block)
-
+        self.edge_updates = self.init_edge_list()
+        self.msg_passes = self.init_msg_list()
+        self.state_transitions = self.init_state_list()
         ### readout function ###
         self.fc1 = nn.Linear(hidden_channels, hidden_channels // 2)
         self.act = ShiftedSoftplus()
         self.fc2 = nn.Linear(hidden_channels // 2, 1)
-
+        ### readout function ###
         self.register_buffer('initial_atomref', atomref)
         self.atomref = None
-        if atomref is not None:
-            self.atomref = nn.Embedding(100, 1)
+        if atomref is not None:  # TODO: check that condition is not satisfied
+            self.atomref = nn.Embedding(num_embeddings, 1)
             self.atomref.weight.data.copy_(atomref)
 
         self.reset_parameters()
 
+    def init_edge_list(self):
+        edge_updates = nn.ModuleList()
+        edge_net0 = EdgeUpdate(self.num_gaussians + 2 * self.hidden_channels, self.hidden_channels)
+        edge_updates.append(edge_net0)
+        for _ in range(self.num_interactions - 1):
+            edge_net = EdgeUpdate(3 * self.hidden_channels, self.hidden_channels)
+            edge_updates.append(edge_net)
+        return edge_updates
+
+    def init_msg_list(self):
+        msg_passes = nn.ModuleList()
+        for _ in range(self.num_interactions):
+            msg_pass = MessageFunction(self.hidden_channels, self.num_filters)
+            msg_passes.append(msg_pass)
+        return msg_passes
+
+    def init_state_list(self):
+        state_transitions = nn.ModuleList()
+        if self.hypernet_update:
+            state_transition = StateHyper(self.hidden_channels, self.device)
+            for _ in range(self.num_interactions):
+                state_transitions.append(state_transition)
+        else:
+            for _ in range(self.num_interactions):
+                state_transition = StateMLP(self.hidden_channels)
+                state_transitions.append(state_transition)
+
+        return state_transitions
+
     def reset_parameters(self):
         self.embedding.reset_parameters()
-        for i, interaction in enumerate(self.interactions):
-            interaction.reset_parameters()
+        for i in enumerate(self.num_interactions):
+            self.msg_passes[i].reset_parameters()
             self.edge_updates[i].reset_parameters()
+            self.state_transitions[i].reset_parameters()
         # torch.nn.init.xavier_uniform_(self.lin1.weight)
         # self.state_transition.reset_parameters()
         torch.nn.init.kaiming_uniform_(self.fc1.weight)
@@ -159,7 +181,6 @@ class NMPEdge(torch.nn.Module):
     def forward(self, z, pos, batch=None):
         assert z.dim() == 1 and z.dtype == torch.long
         batch = torch.zeros_like(z) if batch is None else batch
-
         h = self.embedding(z)
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)
         row, col = edge_index
@@ -167,11 +188,16 @@ class NMPEdge(torch.nn.Module):
         edge_attr = self.distance_expansion(edge_weight)
 
         e = edge_attr
-        # h0 = h.clone()
-        for i, interaction in enumerate(self.interactions):
-
+        h0 = h.clone()
+        s_t = None
+        for i in range(self.num_interactions):
             e = self.edge_updates[i](h, edge_index, e)
-            h = h + interaction(h, edge_index, e)
+            msg = self.msg_passes[i](h, edge_index, e)
+            if self.hypernet_update:
+                s_t = self.state_transitions[i](h0, h, msg)
+            else:
+                s_t = self.state_transitions[i](msg)
+            h = h + s_t
 
         h = self.fc1(h)
         h = self.act(h)
@@ -208,43 +234,35 @@ class NMPEdge(torch.nn.Module):
                 f'cutoff={self.cutoff})')
 
 
-class InteractionBlock(torch.nn.Module):
-    def __init__(self, hidden_channels, num_filters, state_hyper=False):
-        super(InteractionBlock, self).__init__()
+class MessageFunction(torch.nn.Module):
+    def __init__(self, hidden_channels, num_filters):
+        super(MessageFunction, self).__init__()
         self.filter_mlp = nn.Sequential(
-            nn.Linear(num_filters, num_filters),
+            nn.Linear(hidden_channels, num_filters),
             ShiftedSoftplus(),
             nn.Linear(num_filters, num_filters),
             ShiftedSoftplus()
         )
         self.cf_conv = CFConv(hidden_channels, num_filters, self.filter_mlp)
-        if state_hyper:
-            self.state_transition = ... # use HyperNetwork
-        else:
-            self.state_transition = StateMLP(num_filters)
         self.reset_parameters()
 
     def reset_parameters(self):
         self.cf_conv.reset_parameters()
-        self.state_transition.reset_parameters()
         torch.nn.init.kaiming_uniform_(self.filter_mlp[0].weight)
         self.filter_mlp[0].bias.data.fill_(0)
         torch.nn.init.kaiming_uniform_(self.filter_mlp[2].weight)
         self.filter_mlp[2].bias.data.fill_(0)
-        # torch.nn.init.kaiming_uniform_(self.lin.weight)
-        # self.lin.bias.data.fill_(0)
 
     def forward(self, x, edge_index, edge_attr):
         x = self.cf_conv(x, edge_index, edge_attr)
-        x = self.state_transition(x)
         return x
 
 
 class EdgeUpdate(nn.Module):
-    def __init__(self, in_channels, num_filters):
+    def __init__(self, in_channels, hidden_channels):
         super(EdgeUpdate, self).__init__()
-        self.fc1 = nn.Linear(in_channels, num_filters * 2)
-        self.fc2 = nn.Linear(num_filters * 2, num_filters)
+        self.fc1 = nn.Linear(in_channels, hidden_channels * 2)
+        self.fc2 = nn.Linear(hidden_channels * 2, hidden_channels)
         self.act = ShiftedSoftplus()
         self.reset_parameters()
 
@@ -265,15 +283,17 @@ class EdgeUpdate(nn.Module):
 
 
 class StateHyper(nn.Module):
-    def __init__(self, num_filters):
+    def __init__(self, hidden_channels, device):
         super(StateHyper, self).__init__()
-        self.hyperparams_dim = num_filters // 2
-        self.num_filters = num_filters
+        self.hyperparams_dim = hidden_channels // 2
+        self.hidden_channels = hidden_channels
         self.c = nn.Parameter(torch.rand(1), requires_grad=True)
-        self.fc1 = nn.Linear(self.num_filters, self.hyperparams_dim, bias=False)
+        self.device = device
+
+        self.fc1 = nn.Linear(self.hidden_channels, self.hyperparams_dim, bias=False)
         self.fc2 = nn.Linear(self.hyperparams_dim, self.hyperparams_dim, bias=False)
         self.fc3 = nn.Linear(self.hyperparams_dim, self.hyperparams_dim, bias=False)
-        self.fc4 = nn.Linear(self.hyperparams_dim, 2 * self.num_filters, bias=False)
+        self.fc4 = nn.Linear(self.hyperparams_dim, 2 * self.hidden_channels ** 2, bias=False)  # or (self.hyperparams_dim, 2 * self.num_filters ** 2, bias=False)
         self.act = nn.Tanh()
         self.reset_parameters()
 
@@ -284,32 +304,39 @@ class StateHyper(nn.Module):
         torch.nn.init.kaiming_uniform_(self.fc4.weight)
         torch.nn.init.uniform_(self.c, 0, 1)
 
-    def forward(self, h_0, h_t, msg):  # TODO: check that weight is clipped (between 0 and 1)
-        h = self.c * h_0 + (1 - self.c) * h_t
-        ######## f ########
-        f1_out = self.fc1(h)
-        f2_in = self.act(f1_out)
-        f2_out = self.fc2(f2_in)
-        f3_in = self.act(f2_out)
-        f3_out = self.fc3(f3_in)
-        f4_in = self.act(f3_out)
-        f4_out = self.fc4(f4_in)
-        ######## f ########
+    def forward(self, h_0, h_t, msg):  # TODO: check that weight is clipped (between 0 and 1), enter one by one (loop)
+        if self.c < 0.0:
+            self.c.data = torch.tensor([0.0]).float().to(self.device).data
+        elif self.c > 1.0:
+            self.c.data = torch.tensor([1.0]).float().to(self.device).data
+        out = torch.zeros_like(h_0).float()
+        for i in range(h_0.size(0)):
+            h = self.c * h_0[i, :] + (1 - self.c) * h_t[i, :]
+            ######## f ########
+            f1_out = self.fc1(h)
+            f2_in = self.act(f1_out)
+            f2_out = self.fc2(f2_in)
+            f3_in = self.act(f2_out)
+            f3_out = self.fc3(f3_in)
+            f4_in = self.act(f3_out)
+            f4_out = self.fc4(f4_in)
+            ######## f ########
+            ####### g #######
+            g1_weights = f4_out[:, :self.hidden_channels ** 2].view(self.hidden_channels, self.hidden_channels)
+            g2_weights = f4_out[:, self.hidden_channels ** 2:].view(self.hidden_channels, self.hidden_channels)
+            g1_out = torch.nn.functional.linear(msg[i, :], g1_weights)
+            g2_in = self.act(g1_out)
+            g2_out = torch.nn.functional.linear(g2_in, g2_weights)
+            out[i, :] += g2_out
         ####### g #######
-        g1_weights = f4_out[:, :self.num_filters]
-        g2_weights = f4_out[:, self.num_filters:]
-        g1_out = torch.nn.functional.linear(msg, g1_weights)
-        g2_in = self.act(g1_out)
-        g2_out = torch.nn.functional.linear(g2_in, g2_weights)
-        ####### g #######
-        return g2_out
+        return out
 
 
 class StateMLP(nn.Module):
-    def __init__(self, num_filters):
+    def __init__(self, hidden_channels):
         super(StateMLP, self).__init__()
-        self.fc1 = nn.Linear(num_filters, num_filters, bias=False)
-        self.fc2 = nn.Linear(num_filters, num_filters, bias=False)
+        self.fc1 = nn.Linear(hidden_channels, hidden_channels, bias=False)
+        self.fc2 = nn.Linear(hidden_channels, hidden_channels, bias=False)
         self.act = ShiftedSoftplus()
         self.reset_parameters()
 

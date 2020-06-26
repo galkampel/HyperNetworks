@@ -8,21 +8,74 @@ import torch
 from model.nmp_edge import NMPEdge
 import argparse
 
+SEED = 0
+optimizers = {'Adam': nn.Adam, 'SGD': nn.SGD}
+
+def get_arguments(arg_list=None):
+    parser = argparse.ArgumentParser(
+        description="Train graph convolution network"
+    )
+    parser.add_argument("--dataset", type=str, default="QM9", choices=["QM9"])
+    parser.add_argument("--path_root", type=str, default="'/home/galkampel/tmp/QM9'")
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--load_model", type=str, default=None)
+    parser.add_argument("--cutoff", type=int, default=15)
+    parser.add_argument("--num_passes", type=int, default=4)
+    parser.add_argument("--num_gaussians", type=int, default=150)
+    parser.add_argument("--node_embedding_size", type=int, default=256)
+    parser.add_argument("--hidden_channels", type=int, default=256)
+    parser.add_argument("--num_filters", type=int, default=256)
+    parser.add_argument("--gpu_device", type=int, default=3, choices=[0, 1, 2, 3, None])
+    parser.add_argument("--readout", type=str, default="add")
+    parser.add_argument("--max_iters", type=int, default=int(1e7))
+    parser.add_argument("--target", type=int, default=0, choices=range(12))
+    parser.add_argument("--optimizer", type=str, default="Adam")
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--decay_evey", type=int, default=100000)
+    parser.add_argument("--eval_every", type=int, default=50000)
+    parser.add_argument("--no_improvement_thres", type=int, default=1000000)
+    parser.add_argument("--lr_decay_factor", type=float, default=0.96)
+    parser.add_argument("--hypernet_update", type=bool, default=False)
+
+    return parser.parse_args(arg_list)
+
 
 class trainer:
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs): # optimizer parameters, optimizer_name, target, n_iters,
+        # update_every, save
         self.model_name = kwargs.get('model_name", "nmp_edge')
         opt_dict = {'Adam': torch.optim.Adam}
         self.optimizer
+
+    def fit(self):
+        ...
+
+    def evaluate(self):
+        ...
+
+    def save_model(self):
+        ...
+
+    def get_pretrained_model(self):
+        2
 # DEVICE = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
+
+
+class model_run:
+    def __init__(self, configs):
+
+        # hyper_update, embed_size, hidden_channels, num_filters, num_interactions,
+        # num_gaussians, cutoff, readout, hyper_update, device, dipole, mean, std, atomref
+
 
 def get_dataset(root): return QM9(root=root)
 
 
-def train_test_split(train_size=12,seed=0,x=4 ):
+def train_test_split(dataset, train_size=120000, val_size=10000, seed=0):
     torch.manual_seed(seed)
-    train_val_set, test_set = torch.utils.data.random_split(dataset, [120000, 9433])
-    train_set, val_set = torch.utils.data.random_split(train_val_set, [110000, 10000])
+    N = len(dataset)
+    train_val_set, test_set = torch.utils.data.random_split(dataset, [train_size, N - train_size])
+    train_set, val_set = torch.utils.data.random_split(train_val_set, [train_size - val_size, val_size])
     return train_set, val_set, test_set
 
 
@@ -53,6 +106,7 @@ for batch in train_loader:
 
 
 def main(args):
+    torch.manual_seed(SEED)
     dataset = get_dataset(args.root)
     DataLoader = get_dataloader_class("qm9")
     graph_obj_list = DataLoader(cutoff_type="const", cutoff_radius=100).load()
@@ -67,12 +121,5 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-root', default='/home/galkampel/tmp/QM9')  # download QM9
-    parser.add_argument('-weights_file_path', default='input/weights_params.json')
-    parser.add_argument('-LAMAS_weights_path', default='Data/weights/rel_weights.csv')
-    parser.add_argument('-unemployment_path', default='Data/Unemployment rate (smoothend).xlsx')
-    parser.add_argument('-path_dict_names', default='Data/NamesDict.xlsx')
-    arguments = parser.parse_args()
-    main(arguments)
-    main()
+    args  =get_arguments()
+    main(args)
