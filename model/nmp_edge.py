@@ -18,7 +18,7 @@ from torch_scatter import scatter
 from torch_geometric.nn import radius_graph, MessagePassing
 # from torch_geometric.data.makedirs import makedirs
 # from torch_geometric.data import download_url, extract_zip
-
+from model.schnet import ShiftedSoftplus
 
 try:
     import schnetpack as spk
@@ -115,7 +115,7 @@ class NMPEdge(torch.nn.Module):
         atomic_mass = torch.from_numpy(ase.data.atomic_masses)
         self.register_buffer('atomic_mass', atomic_mass)
 
-        self.embedding = nn.Embedding(num_embeddings, hidden_channels)  # 256 instead of 100?
+        self.embedding = nn.Embedding(num_embeddings, hidden_channels)
         self.distance_expansion = GaussianSmearing(0.0, cutoff, num_gaussians)
         self.edge_updates = self.init_edge_list()
         self.msg_passes = self.init_msg_list()
@@ -127,7 +127,7 @@ class NMPEdge(torch.nn.Module):
         ### readout function ###
         self.register_buffer('initial_atomref', atomref)
         self.atomref = None
-        if atomref is not None:  # TODO: check that condition is not satisfied
+        if atomref is not None:
             self.atomref = nn.Embedding(num_embeddings, 1)
             self.atomref.weight.data.copy_(atomref)
 
@@ -164,16 +164,16 @@ class NMPEdge(torch.nn.Module):
 
     def reset_parameters(self):
         self.embedding.reset_parameters()
-        for i in enumerate(self.num_interactions):
+        for i in range(self.num_interactions):
             self.msg_passes[i].reset_parameters()
             self.edge_updates[i].reset_parameters()
             self.state_transitions[i].reset_parameters()
         # torch.nn.init.xavier_uniform_(self.lin1.weight)
         # self.state_transition.reset_parameters()
-        torch.nn.init.kaiming_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
         self.fc1.bias.data.fill_(0)
         # torch.nn.init.xavier_uniform_(self.lin2.weight)
-        torch.nn.init.kaiming_uniform_(self.fc2.weight)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
         self.fc2.bias.data.fill_(0)
         if self.atomref is not None:
             self.atomref.weight.data.copy_(self.initial_atomref)
@@ -185,9 +185,7 @@ class NMPEdge(torch.nn.Module):
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch)
         row, col = edge_index
         edge_weight = (pos[row] - pos[col]).norm(dim=-1)
-        edge_attr = self.distance_expansion(edge_weight)
-
-        e = edge_attr
+        e = self.distance_expansion(edge_weight)
         h0 = h.clone()
         s_t = None
         for i in range(self.num_interactions):
@@ -248,13 +246,13 @@ class MessageFunction(torch.nn.Module):
 
     def reset_parameters(self):
         self.cf_conv.reset_parameters()
-        torch.nn.init.kaiming_uniform_(self.filter_mlp[0].weight)
+        torch.nn.init.xavier_uniform_(self.filter_mlp[0].weight)
         self.filter_mlp[0].bias.data.fill_(0)
-        torch.nn.init.kaiming_uniform_(self.filter_mlp[2].weight)
+        torch.nn.init.xavier_uniform_(self.filter_mlp[2].weight)
         self.filter_mlp[2].bias.data.fill_(0)
 
-    def forward(self, x, edge_index, edge_attr):
-        x = self.cf_conv(x, edge_index, edge_attr)
+    def forward(self, h, edge_index, edge_attr):
+        x = self.cf_conv(h, edge_index, edge_attr)
         return x
 
 
@@ -267,9 +265,9 @@ class EdgeUpdate(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.kaiming_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
         self.fc1.bias.data.fill_(0)
-        torch.nn.init.kaiming_uniform_(self.fc2.weight)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
         self.fc2.bias.data.fill_(0)
 
     def forward(self, x, edge_index, edge_attr):
@@ -279,6 +277,7 @@ class EdgeUpdate(nn.Module):
         edge_attr = self.fc1(edge_attr)
         edge_attr = self.act(edge_attr)
         edge_attr = self.fc2(edge_attr)
+        # edge_attr = self.act(edge_attr)
         return edge_attr
 
 
@@ -298,10 +297,10 @@ class StateHyper(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.kaiming_uniform_(self.fc1.weight)
-        torch.nn.init.kaiming_uniform_(self.fc2.weight)
-        torch.nn.init.kaiming_uniform_(self.fc3.weight)
-        torch.nn.init.kaiming_uniform_(self.fc4.weight)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+        torch.nn.init.xavier_uniform_(self.fc3.weight)
+        torch.nn.init.xavier_uniform_(self.fc4.weight)
         torch.nn.init.uniform_(self.c, 0, 1)
 
     def forward(self, h_0, h_t, msg):  # TODO: check that weight is clipped (between 0 and 1), enter one by one (loop)
@@ -335,14 +334,18 @@ class StateHyper(nn.Module):
 class StateMLP(nn.Module):
     def __init__(self, hidden_channels):
         super(StateMLP, self).__init__()
-        self.fc1 = nn.Linear(hidden_channels, hidden_channels, bias=False)
-        self.fc2 = nn.Linear(hidden_channels, hidden_channels, bias=False)
+        # self.fc1 = nn.Linear(hidden_channels, hidden_channels, bias=False)
+        # self.fc2 = nn.Linear(hidden_channels, hidden_channels, bias=False)
+        self.fc1 = nn.Linear(hidden_channels, hidden_channels)
+        self.fc2 = nn.Linear(hidden_channels, hidden_channels)
         self.act = ShiftedSoftplus()
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.kaiming_uniform_(self.fc1.weight)
-        torch.nn.init.kaiming_uniform_(self.fc2.weight)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+        self.fc1.bias.data.fill_(0)
+        self.fc2.bias.data.fill_(0)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -362,7 +365,7 @@ class CFConv(MessagePassing):
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.kaiming_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
 
     def forward(self, x, edge_index, edge_attr):
         # x = self.fc1(x)
@@ -371,8 +374,8 @@ class CFConv(MessagePassing):
         return x_msg
 
     def message(self, x_j, W):
-        x_j = self.fc1(x_j)
-        return x_j * W
+        x_w = self.fc1(x_j)
+        return x_w * W
 
 
 class GaussianSmearing(torch.nn.Module):
@@ -380,7 +383,7 @@ class GaussianSmearing(torch.nn.Module):
         super(GaussianSmearing, self).__init__()
         stop = stop - (stop - start) / num_gaussians
         offset = torch.linspace(start, stop, num_gaussians)
-        self.coeff = -0.5 / (offset[1] - offset[0]).item() ** 2
+        self.coeff = - 0.5 / (offset[1] - offset[0]).item() ** 2
         self.register_buffer('offset', offset)
 
     def forward(self, dist):
