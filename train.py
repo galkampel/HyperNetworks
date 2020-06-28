@@ -1,11 +1,10 @@
-from csv import excel
-
+# from csv import excel
 from torch_geometric.datasets import QM9
-import torch_geometric.transforms as T
+# import torch_geometric.transforms as T
 from torch_geometric.data import DataLoader
-import torch.nn.functional as F
-import torch.nn as nn
 import torch
+import torch.nn as nn
+# import torch.nn.functional as F
 from model.nmp_edge import NMPEdge
 import os
 import numpy as np
@@ -23,7 +22,7 @@ def get_arguments(arg_list=None):
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--model_filename", type=str, default=None)
     parser.add_argument("--max_iters", type=int, default=int(1e7))
-    parser.add_argument("--target", type=int, default=0, choices=range(12))
+    parser.add_argument("--target", type=int, default=7, choices=range(12))
     parser.add_argument("--optimizer", type=str, default="Adam")
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--decay_evey", type=int, default=100000)
@@ -45,30 +44,61 @@ def get_arguments(arg_list=None):
 
 
 class trainer:
-    def __init__(self, model_run, args): # optimizer parameters, optimizer_name, target, n_iters,
-        # update_every, save
-        self.model = model_run.get_model()
+    def __init__(self, model_run, args):
         self.model_name = model_run.get_model_name()
         self.device = model_run.get_device()
+        self.model = model_run.get_model().to(self.device)
         self.optimizer = optimizers[args.optimizer](self.model.parameters(), lr=args.learning_rate)
         self.decay_factor = args.lr_decay_factor
         self.decay_every = args.decay_every
         self.eval_every = args.eval_every
+        self.n_improverment = args.no_improvement_thres
         self.target = args.target
         self.max_iters = args.max_iters
         self.checkpoint_folder = os.path.join(os.getcwd(), 'chekpoint')
         os.makedirs(self.checkpoint_folder, exist_ok=True)
-        self.start_iter = 0
+        self.start_iter = 1
         self.model_filename = args.model_filename
         self.is_best_model = False
         if self.model_filename and os.path.exists(os.path.join(self.checkpoint_folder, f'{self.model_filename}.pth')):
             self.load_model()
 
     def update_lr(self):
+        print(f'lr before decay = {self.optimizer.param_groups[0]["lr"]}')
         self.optimizer.param_groups[0]["lr"] *= args.lr_decay_factor
+        print(f'lr after decay = {self.optimizer.param_groups[0]["lr"]}')
 
-    def fit(self, train_loader, val_loader): #TODO: finish fit
-        ...
+    def fit(self, train_loader, val_loader):
+        n_iter = self.start_iter
+        best_mae = np.inf
+        best_iter = n_iter
+        has_best_model = self.is_best_model
+        while n_iter < self.max_iters and has_best_model:
+            self.model.train()
+            for train_batch in train_loader:
+                train_batch = train_batch.to(self.device)
+                optimizer.zero_grad()
+                pred = self.model(train_batch.z, train_batch.pos, train_batch.batch)
+                loss = (pred.view(-1) - train_batch.y[:, self.target]).abs().mean()
+                loss.backward()
+                # mae = loss.item()
+                optimizer.step()
+                if n_iter % self.eval_every == 0:
+                    train_mae = self.predict(train_loader)
+                    val_mae = self.predict(val_loader)
+                    print(f'train MAE = {train_mae}\nvalidation MAE = {val_mae}')
+                    if val_mae <= best_mae:
+                        best_mae = val_mae
+                        best_iter = n_iter
+
+                n_iter += 1
+                if n_iter % self.decay_every == 0:
+                    self.update_lr()
+
+                if n_iter - best_iter > self.
+
+            # mae_tot /= len(train_loader)
+            # print(f'MAE at epoch {i} = {mae_tot}')
 
     def predict(self, data_loader):
         maes = []
@@ -111,7 +141,7 @@ class ModelRun:
         self.device = torch.device(f'cuda:{gpu_device}' if torch.cuda.is_available() else 'cpu')
         self.model = NMPEdge(num_gaussians=num_gaussians, cutoff=cutoff, num_interactions=num_interactions,
                              hidden_channels=hidden_channels, num_filters=num_filters, readout=readout,
-                             hypernet_update=hypernet_update, device=self.device).to(self.device)  # no num_embeddings
+                             hypernet_update=hypernet_update, device=self.device)  # no num_embeddings
 
     def get_model(self):
         return self.model
@@ -171,11 +201,10 @@ def main(args):
     print('finished downloading Qm9DataLoader_const-100.00.pkz')
     exit()
     # print(f'graph_obj_list:\n{graph_obj_list}')
-    data_handler = datahandler.EdgeSelectDataHandler(
-        graph_obj_list, ["U"], 0)
-
-    target_mean, target_std = data_handler.get_normalization(per_atom=True)
-    x = 4
+    # data_handler = datahandler.EdgeSelectDataHandler(
+    #     graph_obj_list, ["U"], 0)
+    # target_mean, target_std = data_handler.get_normalization(per_atom=True)
+    # x = 4
 
 
 if __name__ == "__main__":
