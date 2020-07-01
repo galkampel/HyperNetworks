@@ -6,7 +6,7 @@
 # from pstats import Stats
 # from sre_parse import State
 # from sys import _hash_info
-from typing import re
+# from typing import re
 
 import ase
 import torch
@@ -42,24 +42,9 @@ qm9_target_dict = {
 
 
 class NMPEdge(torch.nn.Module):
-    r"""The continuous-filter convolutional neural network SchNet from the
-    `"SchNet: A Continuous-filter Convolutional Neural Network for Modeling
-    Quantum Interactions" <https://arxiv.org/abs/1706.08566>`_ paper that uses
-    the interactions blocks of the form
-
-    .. math::
-        \mathbf{x}^{\prime}_i = \sum_{j \in \mathcal{N}(i)} \mathbf{x}_j \odot
-        h_{\mathbf{\Theta}} ( \exp(-\gamma(\mathbf{e}_{j,i} - \mathbf{\mu}))),
-
-    here :math:`h_{\mathbf{\Theta}}` denotes an MLP and
-    :math:`\mathbf{e}_{j,i}` denotes the interatomic distances between atoms.
-
-    .. note::
-
-        For an example of using a pretrained SchNet variant, see
-        `examples/qm9_pretrained_schnet.py
-        <https://github.com/rusty1s/pytorch_geometric/blob/master/examples/
-        qm9_pretrained_schnet.py>`_.
+    r"""
+    `"NMPEdge: Neural Message Passing with Edge Updates for Predicting Properties
+     of Molecules and Materials" <https://arxiv.org/abs/1806.03146>`
 
     Args:
         hidden_channels (int, optional): Hidden embedding size.
@@ -67,11 +52,11 @@ class NMPEdge(torch.nn.Module):
         num_filters (int, optional): The number of filters to use.
             (default: :obj:`128`)
         num_interactions (int, optional): The number of interaction blocks.
-            (default: :obj:`6`)
+            (default: :obj:`3`)
         num_gaussians (int, optional): The number of gaussians :math:`\mu`.
-            (default: :obj:`50`)
+            (default: :obj:`150`)
         cutoff (float, optional): Cutoff distance for interatomic interactions.
-            (default: :obj:`10.0`)
+            (default: :obj:`15.0`)
         readout (string, optional): Whether to apply :obj:`"add"` or
             :obj:`"mean"` global aggregation. (default: :obj:`"add"`)
         hypernet_update (bool, optionl): If true use hyperNetwork for the
@@ -89,11 +74,9 @@ class NMPEdge(torch.nn.Module):
             Expects a vector of shape :obj:`(max_atomic_number, )`.
     """
 
-    url = 'http://www.quantum-machine.org/datasets/trained_schnet_models.zip'
-
-    def __init__(self, num_embeddings=100, hidden_channels=256, num_filters=256, num_interactions=4,
-                 num_gaussians=150, cutoff=15.0, readout='add', hypernet_update=False, device='cpu',
-                 dipole=False, mean=None, std=None, atomref=None):
+    def __init__(self, num_embeddings=100, hidden_channels=256, num_filters=256, num_interactions=4, num_gaussians=150,
+                 cutoff=15.0, readout='add', hypernet_update=False, g_hidden_channels=128, f_hidden_channels=64,
+                 device='cpu', dipole=False, mean=None, std=None, atomref=None):
         super(NMPEdge, self).__init__()
 
         assert readout in ['add', 'sum', 'mean']
@@ -111,6 +94,8 @@ class NMPEdge(torch.nn.Module):
         self.std = std
         self.scale = None
         self.hypernet_update = hypernet_update
+        self.f_hidden_channels = f_hidden_channels
+        self.g_hidden_channels = g_hidden_channels
         self.device = device
         atomic_mass = torch.from_numpy(ase.data.atomic_masses)
         self.register_buffer('atomic_mass', atomic_mass)
@@ -152,7 +137,8 @@ class NMPEdge(torch.nn.Module):
     def init_state_list(self):
         state_transitions = nn.ModuleList()
         if self.hypernet_update:
-            state_transition = StateHyper(self.hidden_channels, self.device)
+            state_transition = StateHyper(self.hidden_channels, self.f_hidden_channels, self.g_hidden_channels,
+                                          self.device)
             for _ in range(self.num_interactions):
                 state_transitions.append(state_transition)
         else:
@@ -282,17 +268,18 @@ class EdgeUpdate(nn.Module):
 
 
 class StateHyper(nn.Module):
-    def __init__(self, hidden_channels, device):
+    def __init__(self, hidden_channels, f_hidden_channels=64, g_hidden_channels=128, device="cpu"):
         super(StateHyper, self).__init__()
-        self.hyperparams_dim = hidden_channels // 2
         self.hidden_channels = hidden_channels
+        self.f_hidden_channels = f_hidden_channels
+        self.g_hidden_channels = g_hidden_channels
         self.c = nn.Parameter(torch.rand(1), requires_grad=True)
         self.device = device
 
-        self.fc1 = nn.Linear(self.hidden_channels, self.hyperparams_dim, bias=False)
-        self.fc2 = nn.Linear(self.hyperparams_dim, self.hyperparams_dim, bias=False)
-        self.fc3 = nn.Linear(self.hyperparams_dim, self.hyperparams_dim, bias=False)
-        self.fc4 = nn.Linear(self.hyperparams_dim, 2 * self.hidden_channels ** 2, bias=False)  # or (self.hyperparams_dim, 2 * self.num_filters ** 2, bias=False)
+        self.fc1 = nn.Linear(self.hidden_channels, self.f_hidden_channels, bias=False)
+        self.fc2 = nn.Linear(self.f_hidden_channels, self.f_hidden_channels, bias=False)
+        self.fc3 = nn.Linear(self.f_hidden_channels, self.f_hidden_channels, bias=False)
+        self.fc4 = nn.Linear(self.f_hidden_channels, 2 * (self.hidden_channels * self.g_hidden_channels), bias=False)  # or (self.hyperparams_dim, 2 * self.num_filters ** 2, bias=False)
         self.act = nn.Tanh()
         self.reset_parameters()
 
@@ -309,24 +296,59 @@ class StateHyper(nn.Module):
         elif self.c > 1.0:
             self.c.data = torch.tensor([1.0]).float().to(self.device).data
         out = torch.zeros_like(h_0).float()
-        for i in range(h_0.size(0)):
-            h = self.c * h_0[i, :] + (1 - self.c) * h_t[i, :]
-            ######## f ########
-            f1_out = self.fc1(h)
-            f2_in = self.act(f1_out)
-            f2_out = self.fc2(f2_in)
-            f3_in = self.act(f2_out)
-            f3_out = self.fc3(f3_in)
-            f4_in = self.act(f3_out)
-            f4_out = self.fc4(f4_in)
-            ######## f ########
-            ####### g #######
-            g1_weights = f4_out[:, :self.hidden_channels ** 2].view(self.hidden_channels, self.hidden_channels)
-            g2_weights = f4_out[:, self.hidden_channels ** 2:].view(self.hidden_channels, self.hidden_channels)
-            g1_out = torch.nn.functional.linear(msg[i, :], g1_weights)
-            g2_in = self.act(g1_out)
-            g2_out = torch.nn.functional.linear(g2_in, g2_weights)
-            out[i, :] += g2_out
+
+        h = self.c * h_0 + (1 - self.c) * h_t
+        ######## f ########
+        f1_out = self.fc1(h)
+        f2_in = self.act(f1_out)
+        f2_out = self.fc2(f2_in)
+        f3_in = self.act(f2_out)
+        f3_out = self.fc3(f3_in)
+        f4_in = self.act(f3_out)
+        f4_out = self.fc4(f4_in)
+        # print(f'f4_out.shape = {f4_out.shape}')
+        g1_weights = f4_out[:, :self.hidden_channels * self.g_hidden_channels].view(-1, self.g_hidden_channels,
+                                                                                    self.hidden_channels)
+        # print(g1_weights.shape)
+        # print(f'msg.shape = {msg.unsqueeze(1).shape}')
+        g2_weights = f4_out[:, self.hidden_channels * self.g_hidden_channels:].view(-1, self.hidden_channels,
+                                                                                    self.g_hidden_channels)
+        # print(f'g2_weights.shape = {g2_weights.shape}')
+        g1_out = torch.bmm(msg.unsqueeze(1), g1_weights.transpose(1, 2))
+        # print(f'g1_out shape = {g1_out.shape}')
+        out = torch.bmm(g1_out, g2_weights.transpose(1, 2))
+        out = out.squeeze()
+        # print(f'out.shape = {out.shape}')
+        # print(f'out.squeeze().shape = {out.squeeze().shape}')
+        # for i in range(h_0.size(0)):
+        #     g1_out = torch.nn.functional.linear(msg[i, :], g1_weights[i, :])
+        #     # print(f'g1_out.shape = {g1_out.shape}')
+        #     g2_in = self.act(g1_out)
+        #     out[i, :] += torch.nn.functional.linear(g2_in, g2_weights[i, :])
+        # for i in range(h_0.size(0)):
+        #     h = self.c * h_0[i, :] + (1 - self.c) * h_t[i, :]
+        #     ######## f ########
+        #     f1_out = self.fc1(h)
+        #     f2_in = self.act(f1_out)
+        #     f2_out = self.fc2(f2_in)
+        #     f3_in = self.act(f2_out)
+        #     f3_out = self.fc3(f3_in)
+        #     f4_in = self.act(f3_out)
+        #     f4_out = self.fc4(f4_in)
+        #     ######## f ########
+        #     ####### g #######
+        #     # g1_weights = f4_out[:, :self.hidden_channels * self.g_hidden_channels].view(self.hidden_channels,
+        #     #                                                                             self.g_hidden_channels)
+        #     # g2_weights = f4_out[:, self.hidden_channels * self.g_hidden_channels:].view(self.g_hidden_channels,
+        #     #                                                                             self.hidden_channels)
+        #     g1_weights = f4_out[:self.hidden_channels * self.g_hidden_channels].view(self.g_hidden_channels,
+        #                                                                              self.hidden_channels)
+        #     g2_weights = f4_out[self.hidden_channels * self.g_hidden_channels:].view(self.hidden_channels,
+        #                                                                              self.g_hidden_channels)
+        #     g1_out = torch.nn.functional.linear(msg[i, :], g1_weights)
+        #     g2_in = self.act(g1_out)
+        #     g2_out = torch.nn.functional.linear(g2_in, g2_weights)
+        #     out[i, :] += g2_out
         ####### g #######
         return out
 

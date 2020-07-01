@@ -14,9 +14,9 @@ dataset = QM9(root='/home/galkampel/tmp/QM9')  # , transform=T.Distance(norm=Fal
 train_val_set, test_set = torch.utils.data.random_split(dataset, [120000, 9433])
 train_set, val_set = torch.utils.data.random_split(train_val_set, [110000, 10000])
 
-device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 train_loader = DataLoader(train_set, batch_size=32, shuffle=True)
-model = NMPEdge(hidden_channels=256, num_filters=256).to(device)
+model = NMPEdge(hidden_channels=256, num_filters=256, hypernet_update=False).to(device)
 # model = SchNet(hidden_channels=256, num_filters=256).to(device)
 model.train()
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)

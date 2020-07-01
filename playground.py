@@ -1,32 +1,112 @@
-import os.path as osp
+import sys
+import random
+import numpy as np
 import torch
+import torch.nn as nn
 
-from torch_geometric.nn import SchNet
-from torch_geometric.data import DataLoader
-from torch_geometric.datasets import QM9
 
-path = '/home/galkampel/tmp/QM9'
-dataset = QM9(path)
-device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
+class Network(torch.nn.Module):
+    def __init__(self, args=None):
+        super(Network, self).__init__()
+        self.linear = nn.Linear(2, 1)
 
-for target in range(12):
-    model, datasets = SchNet.from_qm9_pretrained(path, dataset, target)
-    train_dataset, val_dataset, test_dataset = datasets
+    def forward(self, op, x):
+        xy = torch.cat((op, x), dim=-1)
+        return self.linear(xy)
 
-    # model = model.to(device)
-    loader = DataLoader(test_dataset, batch_size=256)
 
-    maes = []
-    for data in loader:
-        data = data.to(device)
-        # with torch.no_grad():
-            # pred = model(data.z, data.pos, data.batch)
-        # mae = (pred.view(-1) - data.y[:, target]).abs()
-        # maes.append(mae)
+class HyperNetwork1(torch.nn.Module):
+    def __init__(self, args=None):
+        super(HyperNetwork1, self).__init__()
+        self.get_w = nn.Linear(1, 1)
+        self.get_b = nn.Linear(1, 1)
 
-    mae = torch.cat(maes, dim=0)
+    def forward(self, op, x):
+        return self.get_w(op) * x + self.get_b(op)
 
-    # Report meV instead of eV.
-    mae = 1000 * mae if target in [2, 3, 4, 6, 7, 8, 9, 10] else mae
 
-    print(f'Target: {target:02d}, MAE: {mae.mean():.5f} ± {mae.std():.5f}')
+class HyperNetwork2(torch.nn.Module):
+    def __init__(self, args=None):
+        super(HyperNetwork2, self).__init__()
+        self.get_w = nn.Linear(1, 1)
+        self.get_b = nn.Linear(1, 1)
+
+    def forward(self, op, x):
+        weight = self.get_w(op)
+        bias = self.get_b(op)
+        return torch.nn.functional.linear(x, weight, bias)
+
+
+class HyperNetwork3(torch.nn.Module):
+    def __init__(self, args=None):
+        super(HyperNetwork3, self).__init__()
+        self.get_w1 = nn.Linear(1, 3)
+        self.get_b1 = nn.Linear(1, 3)
+
+        self.get_w2 = nn.Linear(3, 1)
+        self.get_b2 = nn.Linear(3, 1)
+
+    def forward(self, op, x):
+        ######### f ##########
+        weight1 = self.get_w1(op)
+        bias1 = self.get_b1(op)
+
+        # weight2 = self.get_w2(op)
+        weight2 = self.get_w2(weight1)
+        bias2 = self.get_b2(bias1)
+
+        ######### g ##########
+        x = torch.nn.functional.linear(x, weight1, bias1)
+        x = nn.functional.relu(x)
+        x = torch.nn.functional.linear(x, weight2, bias2)
+        return x
+
+
+# if sys.argv[1] == "Network":
+#     net = Network()
+# elif sys.argv[1] == "HyperNetwork1":
+#     net = HyperNetwork1()
+# elif sys.argv[1] == "HyperNetwork2":
+#     net = HyperNetwork2()
+# elif sys.argv[1] == "HyperNetwork3":
+#     net = HyperNetwork3()
+# else:
+#     assert False
+
+net = HyperNetwork3()
+learn_rate = 1e-3
+optimizer = torch.optim.Adam(net.parameters(), lr=learn_rate)
+
+batch_size = 5
+
+while True:
+    optimizer.zero_grad()
+
+    x_batch = []
+    op_batch = []
+    ground_truth_batch = []
+    for i in range(5):
+        x = random.random() * 200 - 100
+        op = random.randint(0, 1)
+        if op == 0:
+            ground_truth = x
+        elif op == 1:
+            ground_truth = x * 7
+
+        op = torch.FloatTensor([op])
+        x = torch.FloatTensor([x])
+        x_batch.append(x)
+        op_batch.append(op)
+        ground_truth_batch.append(op)
+
+    op = torch.stack(op_batch)
+    x = torch.stack(x_batch)
+    ground_truth = torch.stack(ground_truth_batch)
+
+    prediction = net(op, x)
+    loss = ((ground_truth - prediction) ** 2).mean()
+    print(loss.item())
+
+    loss.backward()
+    optimizer.step()
+

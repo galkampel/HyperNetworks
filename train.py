@@ -1,49 +1,53 @@
 # from csv import excel
-from torch_geometric.datasets import QM9
 # import torch_geometric.transforms as T
-from torch_geometric.data import DataLoader
 import torch
-import torch.nn as nn
-# import torch.nn.functional as F
+from torch import optim
 from model.nmp_edge import NMPEdge
+from dataloader import QM9Loader
 import os
 import numpy as np
 import argparse
 
 SEED = 0
-optimizers = {'Adam': nn.Adam, 'SGD': nn.SGD}
+optimizers = {'Adam': optim.Adam, 'SGD': optim.SGD}
 
 
 def get_arguments(arg_list=None):
     parser = argparse.ArgumentParser(description="Model parameters")
-    ###### run configuration ######
+    ###### dataset parameters ######
     parser.add_argument("--dataset", type=str, default="QM9", choices=["QM9"])
-    parser.add_argument("--path_root", type=str, default="'/home/galkampel/tmp/QM9'")
+    parser.add_argument("--save_test", type=bool, default=True, choices=[True, False])
+    parser.add_argument("--root_path", type=str, default="/home/galkampel/tmp/QM9")  # '/home/galkampel/tmp/QM9'
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--train_size", type=int, default=120000)
+    parser.add_argument("--val_size", type=int, default=10000)
+    ###### run configuration ######
     parser.add_argument("--model_filename", type=str, default=None)
     parser.add_argument("--max_iters", type=int, default=int(1e7))
     parser.add_argument("--target", type=int, default=7, choices=range(12))
     parser.add_argument("--optimizer", type=str, default="Adam")
     parser.add_argument("--learning_rate", type=float, default=1e-4)
-    parser.add_argument("--decay_evey", type=int, default=100000)
-    parser.add_argument("--eval_every", type=int, default=50000)
+    parser.add_argument("--decay_every", type=int, default=100000)  # 100000
+    parser.add_argument("--eval_every", type=int, default=50000)  # 50000
     parser.add_argument("--no_improvement_thres", type=int, default=1000000)
     parser.add_argument("--lr_decay_factor", type=float, default=0.96)
     ###### model parameters ######
+    parser.add_argument("--model_name", type=str, default="NMPEdge")
     parser.add_argument("--cutoff", type=float, default=15.0)
     parser.add_argument("--num_passes", type=int, default=4)
     parser.add_argument("--num_gaussians", type=int, default=150)
-    parser.add_argument("--node_embedding_size", type=int, default=256)
+    parser.add_argument("--embed_size", type=int, default=256)
     # parser.add_argument("--hidden_channels", type=int, default=256)
     parser.add_argument("--num_filters", type=int, default=256)
-    parser.add_argument("--gpu_device", type=int, default=3, choices=[0, 1, 2, 3, None])
+    parser.add_argument("--gpu_device", type=int, default=3, choices=[0, 1, 2, 3])
     parser.add_argument("--readout", type=str, default="add")
     parser.add_argument("--hypernet_update", type=bool, default=False)
-
+    # parser.add_argument("--f_hidden_channels", type=int, default=64)
+    # parser.add_argument("--g_hidden_channels", type=int, default=128)
     return parser.parse_args(arg_list)
 
 
-class trainer:
+class Trainer:
     def __init__(self, model_run, args):
         self.model_name = model_run.get_model_name()
         self.device = model_run.get_device()
@@ -52,7 +56,7 @@ class trainer:
         self.decay_factor = args.lr_decay_factor
         self.decay_every = args.decay_every
         self.eval_every = args.eval_every
-        self.n_improverment = args.no_improvement_thres
+        self.no_improvement_thres = args.no_improvement_thres
         self.target = args.target
         self.max_iters = args.max_iters
         self.checkpoint_folder = os.path.join(os.getcwd(), 'chekpoint')
@@ -64,41 +68,7 @@ class trainer:
             self.load_model()
 
     def update_lr(self):
-        print(f'lr before decay = {self.optimizer.param_groups[0]["lr"]}')
-        self.optimizer.param_groups[0]["lr"] *= args.lr_decay_factor
-        print(f'lr after decay = {self.optimizer.param_groups[0]["lr"]}')
-
-    def fit(self, train_loader, val_loader):
-        n_iter = self.start_iter
-        best_mae = np.inf
-        best_iter = n_iter
-        has_best_model = self.is_best_model
-        while n_iter < self.max_iters and has_best_model:
-            self.model.train()
-            for train_batch in train_loader:
-                train_batch = train_batch.to(self.device)
-                optimizer.zero_grad()
-                pred = self.model(train_batch.z, train_batch.pos, train_batch.batch)
-                loss = (pred.view(-1) - train_batch.y[:, self.target]).abs().mean()
-                loss.backward()
-                # mae = loss.item()
-                optimizer.step()
-                if n_iter % self.eval_every == 0:
-                    train_mae = self.predict(train_loader)
-                    val_mae = self.predict(val_loader)
-                    print(f'train MAE = {train_mae}\nvalidation MAE = {val_mae}')
-                    if val_mae <= best_mae:
-                        best_mae = val_mae
-                        best_iter = n_iter
-
-                n_iter += 1
-                if n_iter % self.decay_every == 0:
-                    self.update_lr()
-
-                if n_iter - best_iter > self.
-
-            # mae_tot /= len(train_loader)
-            # print(f'MAE at epoch {i} = {mae_tot}')
+        self.optimizer.param_groups[0]["lr"] *= self.decay_factor
 
     def predict(self, data_loader):
         maes = []
@@ -108,16 +78,52 @@ class trainer:
                 data_batch = data_batch.to(self.device)
                 pred = self.model(data_batch.z, data_batch.pos, data_batch.batch)
                 maes.append((pred.view(-1) - data_batch.y[:, self.target]).abs().cpu().numpy())
+        self.model.train()
         mae = np.concatenate(maes).mean()
         return mae
 
-    def save_model(self, iteration, is_best_model=False):
+    def fit(self, train_loader, val_loader):
+        n_iter = self.start_iter
+        best_mae = np.inf
+        best_iter = n_iter
+        has_best_model = self.is_best_model
+        while n_iter < self.max_iters and not has_best_model:
+            self.model.train()
+            for train_batch in train_loader:
+                train_batch = train_batch.to(self.device)
+                self.optimizer.zero_grad()
+                pred = self.model(train_batch.z, train_batch.pos, train_batch.batch)
+                loss = (pred.view(-1) - train_batch.y[:, self.target]).abs().mean()
+                loss.backward()
+                # mae = loss.item()
+                self.optimizer.step()
+                if n_iter % self.eval_every == 0:
+                    print(f'iteration: {n_iter}')
+                    train_mae = self.predict(train_loader)
+                    val_mae = self.predict(val_loader)
+                    print(f'train MAE = {train_mae}\nvalidation MAE = {val_mae}')
+                    if val_mae < best_mae:
+                        self.save_model(n_iter)
+                        best_mae = val_mae
+                        best_iter = n_iter
+
+                if n_iter % self.decay_every == 0:
+                    self.update_lr()
+
+                if n_iter - best_iter >= self.no_improvement_thres:
+                    has_best_model = True
+                    self.is_best_model = has_best_model
+                    self.save_model(best_iter)
+
+                n_iter += 1
+
+    def save_model(self, iteration):
         model_saved_name = f'{self.model_name}_target={self.target}'
         full_path = os.path.join(self.checkpoint_folder, f'{model_saved_name}.pth')
         torch.save({'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'iteration': iteration,
-                    'is_best_model': is_best_model}, full_path)
+                    'is_best_model': self.is_best_model}, full_path)
 
     def load_model(self):
         path_model = os.path.join(self.checkpoint_folder, f'{self.model_filename}.pth')
@@ -130,18 +136,11 @@ class trainer:
 
 class ModelRun:
     def __init__(self, args):
-        num_gaussians = args.num_gaussians
-        hidden_channels = args.node_embedding_size
-        num_interactions = args.num_passes
-        cutoff = args.cutoff
-        num_filters = args.num_filters
-        readout = args.readout
-        hypernet_update = args.hypernet_update
+        self.hypernet_update = args.hypernet_update
         gpu_device = args.gpu_device
         self.device = torch.device(f'cuda:{gpu_device}' if torch.cuda.is_available() else 'cpu')
-        self.model = NMPEdge(num_gaussians=num_gaussians, cutoff=cutoff, num_interactions=num_interactions,
-                             hidden_channels=hidden_channels, num_filters=num_filters, readout=readout,
-                             hypernet_update=hypernet_update, device=self.device)  # no num_embeddings
+        self.model_name = args.model_name
+        self.model = self.set_model(args)
 
     def get_model(self):
         return self.model
@@ -150,63 +149,39 @@ class ModelRun:
         return self.device
 
     def get_model_name(self):
-        name = 'NMPEdge'
+        name = self.model_name
         if self.hypernet_update:
-            name +=  '_hypernet'
+            name = f'{name}_hypernet'
         return name
 
-
-def get_dataset(root): return QM9(root=root)
-
-
-def train_test_split(dataset, train_size=120000, val_size=10000, seed=0):
-    torch.manual_seed(seed)
-    N = len(dataset)
-    train_val_set, test_set = torch.utils.data.random_split(dataset, [train_size, N - train_size])
-    train_set, val_set = torch.utils.data.random_split(train_val_set, [train_size - val_size, val_size])
-    return train_set, val_set, test_set
-
-
-train_loader = DataLoader(train_set, batch_size=32, shuffle=True)
-for batch in train_loader:
-    batch =batch.to(device)
-# val_loader = DataLoader(val_set, batch_size=32, shuffle=False)
-# test_loader = DataLoader(test_set, batch_size=32, shuffle=False)
-data0 = dataset[0]
-
-device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
-model = NMPEdge().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
-
-model.train()
-
-for batch in train_loader:
-    batch = batch.to(device)
-    optimizer.zero_grad()
-    pred = model(batch.z, batch.pos, batch.batch)
-    mae = (pred.view(-1) - batch.y[:, 1]).abs()
-    loss.backward()
-    optimizer.step()
-
-    # batch = batch.to(DEVICE)
-    x = 3
-    y = 2
+    def set_model(self, args):
+        if self.model_name == "NMPEdge":
+            return NMPEdge(num_gaussians=args.num_gaussians, cutoff=args.cutoff, num_interactions=args.num_passes,
+                           hidden_channels=args.embed_size, num_filters=args.num_filters, readout=args.readout,
+                           hypernet_update=self.hypernet_update, device=self.device)  # no num_embeddings
 
 
 def main(args):
-    torch.manual_seed(SEED)
-    dataset = get_dataset(args.root)
-    DataLoader = get_dataloader_class("qm9")
-    graph_obj_list = DataLoader(cutoff_type="const", cutoff_radius=100).load()
-    print('finished downloading Qm9DataLoader_const-100.00.pkz')
-    exit()
-    # print(f'graph_obj_list:\n{graph_obj_list}')
-    # data_handler = datahandler.EdgeSelectDataHandler(
-    #     graph_obj_list, ["U"], 0)
-    # target_mean, target_std = data_handler.get_normalization(per_atom=True)
-    # x = 4
+    data_loader = None
+    if args.dataset == "QM9":
+        data_loader = QM9Loader(args.root_path, args.target)
+    train_set, val_set, test_set = data_loader.train_test_split(args.train_size, args.val_size)
+    train_loader = data_loader.set_data_loader(train_set, batch_size=args.batch_size, shuffle=True)
+    val_loader = data_loader.set_data_loader(val_set, batch_size=args.batch_size, shuffle=False)
+    test_loader = data_loader.set_data_loader(test_set, batch_size=args.batch_size, shuffle=False)
+    if args.save_test:
+        folder_path = os.path.join(os.getcwd(), 'dataset')
+        os.makedirs(folder_path, exist_ok=True)
+        if not os.path.exists(os.path.join(folder_path, 'test.pth')):
+            data_loader.save_data_loader(test_loader, folder_path, 'test')
+    ### check loading test_loader ###
+    # test_loader2 = data_loader.load_data_loader(os.path.join(os.getcwd(), 'dataset'), 'test')
+    ### check loading test_loader ###
+    model_run = ModelRun(args)
+    trainer = Trainer(model_run, args)
+    trainer.fit(train_loader, val_loader)
 
 
 if __name__ == "__main__":
-    args = get_arguments()
-    main(args)
+    arguments = get_arguments()
+    main(arguments)
