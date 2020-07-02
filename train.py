@@ -42,8 +42,8 @@ def get_arguments(arg_list=None):
     parser.add_argument("--gpu_device", type=int, default=3, choices=[0, 1, 2, 3])
     parser.add_argument("--readout", type=str, default="add")
     parser.add_argument("--hypernet_update", type=bool, default=False)
-    # parser.add_argument("--f_hidden_channels", type=int, default=64)
-    # parser.add_argument("--g_hidden_channels", type=int, default=128)
+    parser.add_argument("--f_hidden_channels", type=int, default=64)
+    parser.add_argument("--g_hidden_channels", type=int, default=128)
     return parser.parse_args(arg_list)
 
 
@@ -59,7 +59,7 @@ class Trainer:
         self.no_improvement_thres = args.no_improvement_thres
         self.target = args.target
         self.max_iters = args.max_iters
-        self.checkpoint_folder = os.path.join(os.getcwd(), 'chekpoint')
+        self.checkpoint_folder = os.path.join(os.getcwd(), 'checkpoint')
         os.makedirs(self.checkpoint_folder, exist_ok=True)
         self.start_iter = 1
         self.model_filename = args.model_filename
@@ -119,8 +119,11 @@ class Trainer:
 
     def save_model(self, iteration):
         model_saved_name = f'{self.model_name}_target={self.target}'
+        if self.is_best_model:
+            model_saved_name = f'{self.model_name}_pretrained_target={self.target}'
         full_path = os.path.join(self.checkpoint_folder, f'{model_saved_name}.pth')
         torch.save({'model_state_dict': self.model.state_dict(),
+                    'device': self.device,
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'iteration': iteration,
                     'is_best_model': self.is_best_model}, full_path)
@@ -129,6 +132,8 @@ class Trainer:
         path_model = os.path.join(self.checkpoint_folder, f'{self.model_filename}.pth')
         checkpoint = torch.load(path_model)
         self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.device = checkpoint['iteration']
+        self.model = self.model.to(self.device)
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.start_iter = checkpoint['iteration']
         self.is_best_model = checkpoint['is_best_model']
@@ -158,7 +163,8 @@ class ModelRun:
         if self.model_name == "NMPEdge":
             return NMPEdge(num_gaussians=args.num_gaussians, cutoff=args.cutoff, num_interactions=args.num_passes,
                            hidden_channels=args.embed_size, num_filters=args.num_filters, readout=args.readout,
-                           hypernet_update=self.hypernet_update, device=self.device)  # no num_embeddings
+                           hypernet_update=self.hypernet_update, g_hidden_channels=args.g_hidden_channels,
+                           f_hidden_channels=args.f_hidden_channels, device=self.device)  # no num_embeddings
 
 
 def main(args):

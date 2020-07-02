@@ -290,12 +290,12 @@ class StateHyper(nn.Module):
         torch.nn.init.xavier_uniform_(self.fc4.weight)
         torch.nn.init.uniform_(self.c, 0, 1)
 
-    def forward(self, h_0, h_t, msg):  # TODO: check that weight is clipped (between 0 and 1), enter one by one (loop)
+    def forward(self, h_0, h_t, msg):
         if self.c < 0.0:
             self.c.data = torch.tensor([0.0]).float().to(self.device).data
         elif self.c > 1.0:
             self.c.data = torch.tensor([1.0]).float().to(self.device).data
-        out = torch.zeros_like(h_0).float()
+        # out = torch.zeros_like(h_0).float()
 
         h = self.c * h_0 + (1 - self.c) * h_t
         ######## f ########
