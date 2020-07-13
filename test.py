@@ -8,27 +8,29 @@ import argparse
 
 def get_arguments(arg_list=None):
     parser = argparse.ArgumentParser(description="Test parameters")
-    parser.add_argument("--data_folder", type=str, default="data", choices=["data"])
-    parser.add_argument("--data_filename", type=str)
-    parser.add_argument("--target", type=int, default=7, choices=range(12))
-    # parser.add_argument("--gpu_device", type=int, default=3, choices=[0, 1, 2, 3])
+    parser.add_argument("--data_folder", type=str, default="dataset", choices=["dataset"])
+    parser.add_argument("--data_filename", type=str, default="NMPEdge_test", choices=["NMPEdge_test"])
+    parser.add_argument("--target", type=int, default=10, choices=range(12))  # 7/10
+    parser.add_argument("--gpu_device", type=int, default=1, choices=[0, 1, 2, 3])
     parser.add_argument("--model_folder", type=str, default="checkpoint")
-    parser.add_argument("--model_filename", type=str, default=None)
+    parser.add_argument("--model_filename", type=str, default="NMPEdge_hypernet_pretrained_target=10")  # NMPEdge_pretrained_target=7/10, NMPEdge_hypernet_pretrained_target=7/10
+    parser.add_argument("--readout", type=str, default="add", choices=["add", "mean"])
+    parser.add_argument("--hypernet_update", type=bool, default=True, choices=[True, False])
     parser.add_argument("--model_name", type=str, default="NMPEdge")
     return parser.parse_args(arg_list)
 
 
 class TestPretrained:
-    def __init__(self, model_name, target):
+    def __init__(self, model_name, target, gpu_device):
         self.model_name = model_name
         self.target = target
         self.model = None
-        self.device = None
+        self.device = torch.device(f'cuda:{gpu_device}' if torch.cuda.is_available() else 'cpu')
 
-    def init_model(self):
+    def init_model(self, args):
         model = None
         if self.model_name == "NMPEdge":
-            model = NMPEdge()
+            model = NMPEdge(readout=args.readout, hypernet_update=args.hypernet_update, device=self.device)
         return model
 
     def predict(self, data_loader):
@@ -44,28 +46,32 @@ class TestPretrained:
         return mae
 
     def load_testloader(self, data_folder, data_filename):
-        path_testloader = os.path.join(data_folder, data_filename)
+        path_testloader = os.path.join(data_folder, f'{data_filename}.pth')
+        if not os.path.exists(path_testloader):
+            print(f'file {path_testloader} does not exist')
+            exit()
         test_loader = torch.load(path_testloader)
         return test_loader
 
-    def load_model(self, folder_name, filename):
-        self.model = self.init_model()
+    def load_model(self, folder_name, filename, args):
         path_pretrained_model = os.path.join(folder_name, f'{filename}.pth')
         pretrained_params = torch.load(path_pretrained_model)
+        self.model = self.init_model(args)
         self.model.load_state_dict(pretrained_params['model_state_dict'])
-        self.device = pretrained_params['device']
         self.model = self.model.to(self.device)
-        # self.optimizer.load_state_dict(pretrained_params['optimizer_state_dict']) # remove?
-        # self.start_iter = pretrained_params['iteration'] # remove?
-        # self.is_best_model = pretrained_params['is_best_model'] # remove?
 
 
 def test_pretrained_model(args):
-    test_pretrained = TestPretrained(args.model_name, args.target)
-    test_pretrained.load_model(args.model_folder, args.model_filename)
+    test_pretrained = TestPretrained(args.model_name, args.target, args.gpu_device)
+    model_file_path = os.path.join(args.model_folder, f'{args.model_filename}.pth')
+    if not os.path.exists(model_file_path):
+        print(f'path to file {model_file_path} does not exist')
+        exit()
+    test_pretrained.load_model(args.model_folder, args.model_filename, args)
     test_loader = test_pretrained.load_testloader(args.data_folder, args.data_filename)
     mae = test_pretrained.predict(test_loader)
-    print(f"{args.model_name}\tuse_hypernetworks={'hypernet' in args.model_filename}\ttarget={args.target}")
+    hyper_str = 'with hypernetworks' if 'hypernet' in args.model_filename else 'without hypernetwroks'
+    print(f"{args.model_name} {hyper_str}\ttarget={args.target}:")
     print(f'Test set MAE = {mae}')
 
 

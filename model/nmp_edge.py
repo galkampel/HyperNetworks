@@ -1,23 +1,9 @@
-# import os
-# import os.path as osp
-# from math import pi as PI
-# import warnings
-# import itertools
-# from pstats import Stats
-# from sre_parse import State
-# from sys import _hash_info
-# from typing import re
-
 import ase
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-# import numpy as np
-
 from torch_scatter import scatter
 from torch_geometric.nn import radius_graph, MessagePassing
-# from torch_geometric.data.makedirs import makedirs
-# from torch_geometric.data import download_url, extract_zip
 from model.schnet import ShiftedSoftplus
 
 try:
@@ -154,11 +140,8 @@ class NMPEdge(torch.nn.Module):
             self.msg_passes[i].reset_parameters()
             self.edge_updates[i].reset_parameters()
             self.state_transitions[i].reset_parameters()
-        # torch.nn.init.xavier_uniform_(self.lin1.weight)
-        # self.state_transition.reset_parameters()
         torch.nn.init.xavier_uniform_(self.fc1.weight)
         self.fc1.bias.data.fill_(0)
-        # torch.nn.init.xavier_uniform_(self.lin2.weight)
         torch.nn.init.xavier_uniform_(self.fc2.weight)
         self.fc2.bias.data.fill_(0)
         if self.atomref is not None:
@@ -279,7 +262,7 @@ class StateHyper(nn.Module):
         self.fc1 = nn.Linear(self.hidden_channels, self.f_hidden_channels, bias=False)
         self.fc2 = nn.Linear(self.f_hidden_channels, self.f_hidden_channels, bias=False)
         self.fc3 = nn.Linear(self.f_hidden_channels, self.f_hidden_channels, bias=False)
-        self.fc4 = nn.Linear(self.f_hidden_channels, 2 * (self.hidden_channels * self.g_hidden_channels), bias=False)  # or (self.hyperparams_dim, 2 * self.num_filters ** 2, bias=False)
+        self.fc4 = nn.Linear(self.f_hidden_channels, 2 * (self.hidden_channels * self.g_hidden_channels), bias=False)
         self.act = nn.Tanh()
         self.reset_parameters()
 
@@ -295,8 +278,6 @@ class StateHyper(nn.Module):
             self.c.data = torch.tensor([0.0]).float().to(self.device).data
         elif self.c > 1.0:
             self.c.data = torch.tensor([1.0]).float().to(self.device).data
-        # out = torch.zeros_like(h_0).float()
-
         h = self.c * h_0 + (1 - self.c) * h_t
         ######## f ########
         f1_out = self.fc1(h)
@@ -306,49 +287,17 @@ class StateHyper(nn.Module):
         f3_out = self.fc3(f3_in)
         f4_in = self.act(f3_out)
         f4_out = self.fc4(f4_in)
-        # print(f'f4_out.shape = {f4_out.shape}')
+        ######## f ########
         g1_weights = f4_out[:, :self.hidden_channels * self.g_hidden_channels].view(-1, self.g_hidden_channels,
                                                                                     self.hidden_channels)
-        # print(g1_weights.shape)
-        # print(f'msg.shape = {msg.unsqueeze(1).shape}')
         g2_weights = f4_out[:, self.hidden_channels * self.g_hidden_channels:].view(-1, self.hidden_channels,
                                                                                     self.g_hidden_channels)
-        # print(f'g2_weights.shape = {g2_weights.shape}')
+        ####### g #######
         g1_out = torch.bmm(msg.unsqueeze(1), g1_weights.transpose(1, 2))
-        # print(f'g1_out shape = {g1_out.shape}')
-        out = torch.bmm(g1_out, g2_weights.transpose(1, 2))
-        out = out.squeeze()
-        # print(f'out.shape = {out.shape}')
-        # print(f'out.squeeze().shape = {out.squeeze().shape}')
-        # for i in range(h_0.size(0)):
-        #     g1_out = torch.nn.functional.linear(msg[i, :], g1_weights[i, :])
-        #     # print(f'g1_out.shape = {g1_out.shape}')
-        #     g2_in = self.act(g1_out)
-        #     out[i, :] += torch.nn.functional.linear(g2_in, g2_weights[i, :])
-        # for i in range(h_0.size(0)):
-        #     h = self.c * h_0[i, :] + (1 - self.c) * h_t[i, :]
-        #     ######## f ########
-        #     f1_out = self.fc1(h)
-        #     f2_in = self.act(f1_out)
-        #     f2_out = self.fc2(f2_in)
-        #     f3_in = self.act(f2_out)
-        #     f3_out = self.fc3(f3_in)
-        #     f4_in = self.act(f3_out)
-        #     f4_out = self.fc4(f4_in)
-        #     ######## f ########
-        #     ####### g #######
-        #     # g1_weights = f4_out[:, :self.hidden_channels * self.g_hidden_channels].view(self.hidden_channels,
-        #     #                                                                             self.g_hidden_channels)
-        #     # g2_weights = f4_out[:, self.hidden_channels * self.g_hidden_channels:].view(self.g_hidden_channels,
-        #     #                                                                             self.hidden_channels)
-        #     g1_weights = f4_out[:self.hidden_channels * self.g_hidden_channels].view(self.g_hidden_channels,
-        #                                                                              self.hidden_channels)
-        #     g2_weights = f4_out[self.hidden_channels * self.g_hidden_channels:].view(self.hidden_channels,
-        #                                                                              self.g_hidden_channels)
-        #     g1_out = torch.nn.functional.linear(msg[i, :], g1_weights)
-        #     g2_in = self.act(g1_out)
-        #     g2_out = torch.nn.functional.linear(g2_in, g2_weights)
-        #     out[i, :] += g2_out
+        g2_in = self.act(g1_out)
+        g2_out = torch.bmm(g2_in, g2_weights.transpose(1, 2))
+        g2_out = g2_out.squeeze()
+        out = self.act(g2_out)
         ####### g #######
         return out
 
@@ -356,8 +305,6 @@ class StateHyper(nn.Module):
 class StateMLP(nn.Module):
     def __init__(self, hidden_channels):
         super(StateMLP, self).__init__()
-        # self.fc1 = nn.Linear(hidden_channels, hidden_channels, bias=False)
-        # self.fc2 = nn.Linear(hidden_channels, hidden_channels, bias=False)
         self.fc1 = nn.Linear(hidden_channels, hidden_channels)
         self.fc2 = nn.Linear(hidden_channels, hidden_channels)
         self.act = ShiftedSoftplus()
@@ -380,17 +327,14 @@ class CFConv(MessagePassing):
     def __init__(self, in_channels, num_filters, filter_nn):
         super(CFConv, self).__init__(aggr='add')
         self.fc1 = nn.Linear(in_channels, num_filters, bias=False)
-        # self.lin2 = nn.Linear(num_filters, out_channels)
         self.filter_nn = filter_nn
         # self.cutoff = cutoff
-
         self.reset_parameters()
 
     def reset_parameters(self):
         torch.nn.init.xavier_uniform_(self.fc1.weight)
 
     def forward(self, x, edge_index, edge_attr):
-        # x = self.fc1(x)
         W = self.filter_nn(edge_attr)
         x_msg = self.propagate(edge_index, x=x, W=W)
         return x_msg

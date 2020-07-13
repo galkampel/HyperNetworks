@@ -1,5 +1,4 @@
-# from csv import excel
-# import torch_geometric.transforms as T
+
 import torch
 from torch import optim
 from model.nmp_edge import NMPEdge
@@ -16,20 +15,20 @@ def get_arguments(arg_list=None):
     parser = argparse.ArgumentParser(description="Model parameters")
     ###### dataset parameters ######
     parser.add_argument("--dataset", type=str, default="QM9", choices=["QM9"])
-    parser.add_argument("--save_test", type=bool, default=True, choices=[True, False])
-    parser.add_argument("--root_path", type=str, default="/home/galkampel/tmp/QM9")  # '/home/galkampel/tmp/QM9'
+    parser.add_argument("--save_test", type=bool, default=False, choices=[True, False])
+    parser.add_argument("--root_path", type=str, default="/home/galkampel/tmp/QM9")  # path to save/load dataset for training
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--train_size", type=int, default=120000)
     parser.add_argument("--val_size", type=int, default=10000)
     ###### run configuration ######
-    parser.add_argument("--model_filename", type=str, default=None)
+    parser.add_argument("--model_filename", type=str, default=None)  # load (partially trained) model
     parser.add_argument("--max_iters", type=int, default=int(1e7))
-    parser.add_argument("--target", type=int, default=7, choices=range(12))
+    parser.add_argument("--target", type=int, default=10, choices=range(12))  # checked on {7, 10}
     parser.add_argument("--optimizer", type=str, default="Adam")
     parser.add_argument("--learning_rate", type=float, default=1e-4)
-    parser.add_argument("--decay_every", type=int, default=100000)  # 100000
-    parser.add_argument("--eval_every", type=int, default=50000)  # 50000
-    parser.add_argument("--no_improvement_thres", type=int, default=1000000)
+    parser.add_argument("--decay_every", type=int, default=100000)
+    parser.add_argument("--eval_every", type=int, default=50000)
+    parser.add_argument("--no_improvement_thres", type=int, default=1000000)  # if there is no improvement within no_improvement_thres update steps - stop
     parser.add_argument("--lr_decay_factor", type=float, default=0.96)
     ###### model parameters ######
     parser.add_argument("--model_name", type=str, default="NMPEdge")
@@ -40,8 +39,8 @@ def get_arguments(arg_list=None):
     # parser.add_argument("--hidden_channels", type=int, default=256)
     parser.add_argument("--num_filters", type=int, default=256)
     parser.add_argument("--gpu_device", type=int, default=3, choices=[0, 1, 2, 3])
-    parser.add_argument("--readout", type=str, default="add")
-    parser.add_argument("--hypernet_update", type=bool, default=False)
+    parser.add_argument("--readout", type=str, default="add", choices=["add", "mean"])
+    parser.add_argument("--hypernet_update", type=bool, default=True, choices=[True, False])
     parser.add_argument("--f_hidden_channels", type=int, default=64)
     parser.add_argument("--g_hidden_channels", type=int, default=128)
     return parser.parse_args(arg_list)
@@ -132,7 +131,7 @@ class Trainer:
         path_model = os.path.join(self.checkpoint_folder, f'{self.model_filename}.pth')
         checkpoint = torch.load(path_model)
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.device = checkpoint['iteration']
+        self.device = checkpoint['device']
         self.model = self.model.to(self.device)
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.start_iter = checkpoint['iteration']
@@ -169,8 +168,15 @@ class ModelRun:
 
 def main(args):
     data_loader = None
+
     if args.dataset == "QM9":
+        if not os.path.exists(os.path.join(*(['/'] + args.root_path.split('/')[1:-1]))):
+            print(f'{args.root_path} is not a legit directory to save the data')
+            exit()
         data_loader = QM9Loader(args.root_path, args.target)
+
+    print(f'model name={args.model_name}, use_hypernetworks={args.hypernet_update}, target={args.target}')
+    print(f'Readout aggregation={args.readout}, gpu={args.gpu_device}')
     train_set, val_set, test_set = data_loader.train_test_split(args.train_size, args.val_size)
     train_loader = data_loader.set_data_loader(train_set, batch_size=args.batch_size, shuffle=True)
     val_loader = data_loader.set_data_loader(val_set, batch_size=args.batch_size, shuffle=False)
@@ -178,11 +184,8 @@ def main(args):
     if args.save_test:
         folder_path = os.path.join(os.getcwd(), 'dataset')
         os.makedirs(folder_path, exist_ok=True)
-        if not os.path.exists(os.path.join(folder_path, 'test.pth')):
+        if not os.path.exists(os.path.join(folder_path, f'{args.model_name}_test.pth')):
             data_loader.save_data_loader(test_loader, folder_path, 'test')
-    ### check loading test_loader ###
-    # test_loader2 = data_loader.load_data_loader(os.path.join(os.getcwd(), 'dataset'), 'test')
-    ### check loading test_loader ###
     model_run = ModelRun(args)
     trainer = Trainer(model_run, args)
     trainer.fit(train_loader, val_loader)
