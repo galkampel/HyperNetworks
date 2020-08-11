@@ -10,10 +10,10 @@ def get_arguments(arg_list=None):
     parser = argparse.ArgumentParser(description="Test parameters")
     parser.add_argument("--data_folder", type=str, default="dataset", choices=["dataset"])
     parser.add_argument("--data_filename", type=str, default="NMPEdge_test", choices=["NMPEdge_test"])
-    parser.add_argument("--target", type=int, default=10, choices=range(12))  # 7/10
+    parser.add_argument("--target", type=int, default=7, choices=range(12))  # 7/10
     parser.add_argument("--gpu_device", type=int, default=1, choices=[0, 1, 2, 3])
     parser.add_argument("--model_folder", type=str, default="checkpoint")
-    parser.add_argument("--model_filename", type=str, default="NMPEdge_hypernet_pretrained_target=10")  # NMPEdge_pretrained_target=7/10, NMPEdge_hypernet_pretrained_target=7/10
+    parser.add_argument("--model_filename", type=str, default="NMPEdge_hypernet_pretrained_target=7")  # NMPEdge_pretrained_target=7/10, NMPEdge_hypernet_pretrained_target=7/10
     parser.add_argument("--readout", type=str, default="add", choices=["add", "mean"])
     parser.add_argument("--hypernet_update", type=bool, default=True, choices=[True, False])
     parser.add_argument("--model_name", type=str, default="NMPEdge")

@@ -1,7 +1,7 @@
 
 import torch
 from torch import optim
-from model.nmp_edge import NMPEdge
+from model.gan import GATConv
 from dataloader import QM9Loader
 import os
 import numpy as np
