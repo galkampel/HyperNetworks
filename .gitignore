@@ -98,6 +98,7 @@ modules.xml
 [Ss]cripts
 pyvenv.cfg
 .venv
+/venv
 pip-selfcheck.json
 
 ### Video ###
@@ -114,6 +115,9 @@ pip-selfcheck.json
 *.swf
 *.vob
 *.wmv
+
+
+*.pyc
 
 /msgnet
 /checkpoint
