@@ -1,6 +1,7 @@
 
 import torch
-from torch_geometric.datasets import QM9
+from torch_geometric.datasets import QM9, Planetoid
+import torch_geometric.transforms as T
 from torch_geometric.data import DataLoader
 import os
 
@@ -47,5 +48,23 @@ class QM9Loader(DatasetLoader):
         train_val_set, test_set = torch.utils.data.random_split(self.dataset, [train_size, N - train_size])
         train_set, val_set = torch.utils.data.random_split(train_val_set, [train_size - val_size, val_size])
         return train_set, val_set, test_set
+
+
+class PlanetoidLoader:
+    def __init__(self, root='/home/galkampel/tmp', dataset_name="PubMed", split_type='public'):
+        names = {"Cora", "CiteSeer", "PubMed"}
+        self.dataset_name = dataset_name
+        self.split_type = split_type
+        path = os.path.join(root, dataset_name)
+        self.dataset = Planetoid(path, dataset_name, split=split_type, transform=T.NormalizeFeatures())
+
+    def get_data(self):
+        return self.dataset[0]
+
+    def get_dataset_name(self):
+        return self.dataset_name
+
+    def get_split_type(self):
+        return self.split_type
 
 

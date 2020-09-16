@@ -1,7 +1,7 @@
 
 import torch
 from torch import optim
-from model.gan import GATConv
+from model.nmp_edge import NMPEdge
 from dataloader import QM9Loader
 import os
 import numpy as np
@@ -62,7 +62,7 @@ class Trainer:
         self.checkpoint_folder = os.path.join(os.getcwd(), 'checkpoint')
         os.makedirs(self.checkpoint_folder, exist_ok=True)
         self.start_iter = 1
-        self.model_filename = args.model_filename
+        self.model_filename = args.model_name
         self.is_best_model = False
         if self.model_filename and os.path.exists(os.path.join(self.checkpoint_folder, f'{self.model_filename}.pth')):
             self.load_model()

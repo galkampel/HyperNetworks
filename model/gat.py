@@ -6,7 +6,7 @@ from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import remove_self_loops, add_self_loops, softmax
 
 
-class GATConv(MessagePassing):
+class HyperGATConv(MessagePassing):
     r"""The graph attentional operator from the `"Graph Attention Networks"
     <https://arxiv.org/abs/1710.10903>`_ paper
 
@@ -42,27 +42,30 @@ class GATConv(MessagePassing):
             sampled neighborhood during training. (default: :obj:`0`)
         bias (bool, optional): If set to :obj:`False`, the layer will not learn
             an additive bias. (default: :obj:`True`)
+        use_hypernetworks (boll, optional): if True, weights are taken from hypernetworks
+        hidden_channels (int, optional): the hidden size in the hypernetwork
+        fixes_c (bool, optional): if set to :obj:`Fasle`, the hypernetwork's input is a convex combination of the
+            current hidden state and the projected initial (hidden) state.
+            Otherwise, the hypernetwork's input is solely based on the current hidden state
         **kwargs (optional): Additional arguments of
             :class:`torch_geometric.nn.conv.MessagePassing`.
     """
-    def __init__(self, in_channels, out_channels, heads=1, concat=True,
-                 negative_slope=0.2, dropout=0, bias=True, has_hypernetwork=False, **kwargs):
-        super(GATConv, self).__init__(aggr='add', **kwargs)
-
-        self.in_channels = in_channels
+    def __init__(self, in_channels, out_channels, heads=1, concat=True, negative_slope=0.2, dropout=0, bias=True,
+                 use_hypernetworks=False, **kwargs):
+        super(HyperGATConv, self).__init__(aggr='add', **kwargs)
+        self.in_channels = in_channels  # ct_in
         self.out_channels = out_channels
         self.heads = heads
         self.concat = concat
         self.negative_slope = negative_slope
         self.dropout = dropout
-        self.has_hypernetworks = has_hypernetwork
-
+        self.use_hypernetworks = use_hypernetworks
         self.__alpha__ = None
 
-        self.lin = Linear(in_channels, heads * out_channels, bias=False)
-
-        self.att_i = Parameter(torch.Tensor(1, heads, out_channels))
-        self.att_j = Parameter(torch.Tensor(1, heads, out_channels))
+        self.lin = Linear(in_channels, heads * out_channels, bias=False) if not self.use_hypernetworks else None
+        self.W_hyper = None
+        self.att_i = Parameter(torch.Tensor(1, heads, out_channels)) if not self.use_hypernetworks else None
+        self.att_j = Parameter(torch.Tensor(1, heads, out_channels)) if not self.use_hypernetworks else None
 
         if bias and concat:
             self.bias = Parameter(torch.Tensor(heads * out_channels))
@@ -74,20 +77,35 @@ class GATConv(MessagePassing):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_uniform_(self.lin.weight)
-        nn.init.xavier_uniform_(self.att_i)
-        nn.init.xavier_uniform_(self.att_j)
-        nn.init.zeros_(self.bias)
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+        if not self.use_hypernetworks:
+            nn.init.xavier_uniform_(self.lin.weight)
+            nn.init.xavier_uniform_(self.att_i)
+            nn.init.xavier_uniform_(self.att_j)
 
-    def forward(self, x, edge_index, return_attention_weights=False):
+    def get_dims(self):
+        return self.in_channels, self.out_channels, self.heads
+
+    def set_hypernetworks_weights(self, W_hyper=None, att_i=None, att_j=None):
+        if self.use_hypernetworks and torch.is_tensor(W_hyper):
+            self.W_hyper = W_hyper
+        if self.use_hypernetworks and torch.is_tensor(att_i):
+            self.att_i = att_i
+        if self.use_hypernetworks and torch.is_tensor(att_j):
+            self.att_j = att_j
+
+    def forward(self, x, edge_index, h0=None, mask=None, return_attention_weights=False):
         """"""
-
         if torch.is_tensor(x):
-            x = self.lin(x)
+            if torch.is_tensor(self.W_hyper) and self.use_hypernetworks:  # hypernetworks that predict W's/(W and att_i, att_j)'s weights
+                x = torch.bmm(x.unsqueeze(1), self.W_hyper.transpose(1, 2)).squeeze(1)
+            else:
+                x = self.lin(x)
+
             x = (x, x)
         else:
             x = (self.lin(x[0]), self.lin(x[1]))
-
         edge_index, _ = remove_self_loops(edge_index)
         edge_index, _ = add_self_loops(edge_index,
                                        num_nodes=x[1].size(self.node_dim))
@@ -109,13 +127,16 @@ class GATConv(MessagePassing):
         else:
             return out
 
-    def message(self, x_i, x_j, edge_index_i, size_i,
+    def message(self, x_i, x_j, edge_index_i, edge_index_j, size_i,
                 return_attention_weights):
         # Compute attention coefficients.
         x_i = x_i.view(-1, self.heads, self.out_channels)
         x_j = x_j.view(-1, self.heads, self.out_channels)
 
-        alpha = (x_i * self.att_i).sum(-1) + (x_j * self.att_j).sum(-1)
+        alpha = (x_i * self.att_i).sum(-1) + (x_j * self.att_j).sum(-1) if not self.use_hypernetworks \
+            else (x_i * self.att_i[edge_index_i]).sum(-1) + (x_j * self.att_j[edge_index_j]).sum(-1)
+
+        # either broadcasting over the examples or per example (hypernetwork) )
         alpha = F.leaky_relu(alpha, self.negative_slope)
         alpha = softmax(alpha, edge_index_i, size_i)
 

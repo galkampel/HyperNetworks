@@ -63,14 +63,14 @@ class TestPretrained:
 
 def test_pretrained_model(args):
     test_pretrained = TestPretrained(args.model_name, args.target, args.gpu_device)
-    model_file_path = os.path.join(args.model_folder, f'{args.model_filename}.pth')
+    model_file_path = os.path.join(args.model_folder, f'{args.model_name}.pth')
     if not os.path.exists(model_file_path):
         print(f'path to file {model_file_path} does not exist')
         exit()
-    test_pretrained.load_model(args.model_folder, args.model_filename, args)
+    test_pretrained.load_model(args.model_folder, args.model_name, args)
     test_loader = test_pretrained.load_testloader(args.data_folder, args.data_filename)
     mae = test_pretrained.predict(test_loader)
-    hyper_str = 'with hypernetworks' if 'hypernet' in args.model_filename else 'without hypernetwroks'
+    hyper_str = 'with hypernetworks' if 'hypernet' in args.model_name else 'without hypernetwroks'
     print(f"{args.model_name} {hyper_str}\ttarget={args.target}:")
     print(f'Test set MAE = {mae}')
 

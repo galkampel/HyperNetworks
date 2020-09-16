@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 
+
 class TransductivePreprocessing:
     def __init__(self, nodes_per_class=20, n_validation=500, n_test=1000, seed=0):
         # self.seed = seed
