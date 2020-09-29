@@ -1,6 +1,6 @@
 # HyperNetworks (PyTorch)
 
-In this repository we implemnt a 2-layer GNNs with hypernetworks model on Pubmed citation network with a semi-supervised learning settings as in https://arxiv.org/pdf/1710.10903.pdf) and NMP-edge with hypernetowrks extension on QM9 (as depicted in https://arxiv.org/pdf/2002.00240.pdf).
+In this repository we implemnt a 2-layer GNNs with hypernetworks model on Pubmed citation network with a semi-supervised learning settings (as in https://arxiv.org/pdf/1710.10903.pdf) and NMP-edge with hypernetowrks extension on QM9 (as depicted in https://arxiv.org/pdf/2002.00240.pdf).
 
 main files:
 train.py - train a 2-layer GNNs, where the models are either GCN (https://arxiv.org/pdf/1609.02907.pdf) or GAT (https://arxiv.org/pdf/1710.10903.pdf)
