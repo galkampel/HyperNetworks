@@ -13,6 +13,8 @@ main directories:
 
 
 *The implementations require PyTorch Geometric (PyG) library
+
+
 Requirements for Pytorch Geomtric installation:
 * At least PyTorch 1.4.0
 * At least cuda 10.0.130
