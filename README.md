@@ -11,6 +11,8 @@ main directories:
 * model- a folder where all the models are implemented (GCN, GAT, 2-layer GNNs with hypernetworks (GATGCN) and nmp-edge (nmp-edge with hypernetwork extension)
 * input- input files which consist of the parameters to be fed into train.py
 
+
+*The implementations require PyTorch Geometric (PyG) library
 Requirements for Pytorch Geomtric installation:
 * At least PyTorch 1.4.0
 * At least cuda 10.0.130
