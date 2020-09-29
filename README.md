@@ -3,13 +3,13 @@
 In this repository we implemnt a 2-layer GNNs with hypernetworks model on Pubmed citation network with a semi-supervised learning settings (as in https://arxiv.org/pdf/1710.10903.pdf) and NMP-edge with hypernetowrks extension on QM9 (as depicted in https://arxiv.org/pdf/2002.00240.pdf).
 
 main files:
-train.py - train a 2-layer GNNs, where the models are either GCN (https://arxiv.org/pdf/1609.02907.pdf) or GAT (https://arxiv.org/pdf/1710.10903.pdf)
-train_nmp.py- train nmp-edge with hypernetowrks extension on QM9
-test_nmp.py - test a pretrained nmp-edge with hypernetowrks extension model on QM9
+* train.py - train a 2-layer GNNs, where the models are either GCN (https://arxiv.org/pdf/1609.02907.pdf) or GAT (https://arxiv.org/pdf/1710.10903.pdf)
+* train_nmp.py- train nmp-edge with hypernetowrks extension on QM9
+* test_nmp.py - test a pretrained nmp-edge with hypernetowrks extension model on QM9
 
 main folders:
-model- a folder where all the models are implemented (GCN, GAT, 2-layer GNNs with hypernetworks (GATGCN) and nmp-edge (nmp-edge with hypernetwork extension)
-input- input files which consist of the parameters to be fed into train.py
+* model- a folder where all the models are implemented (GCN, GAT, 2-layer GNNs with hypernetworks (GATGCN) and nmp-edge (nmp-edge with hypernetwork extension)
+* input- input files which consist of the parameters to be fed into train.py
 
 Requirements for Pytorch Geomtric installation:
 * At least PyTorch 1.4.0
