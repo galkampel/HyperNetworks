@@ -123,6 +123,7 @@ pip-selfcheck.json
 /checkpoint
 /chekpoint
 /dataset
+/Figure
 playground.py
 model/schnet.py
 # End of https://www.toptal.com/developers/gitignore/api/venv,pycharm+all,video
