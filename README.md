@@ -12,7 +12,7 @@ main files:
 * test_nmp.py - test a pretrained nmp-edge with hypernetowrks extension model on QM9
 
 main directories:
-* model- a folder where all the models are implemented (GCN, GAT, 2-layer GNNs with hypernetworks (GATGCN) and nmp-edge (nmp-edge with hypernetwork extension)
+* model- a folder where all the models are implemented (GCN, GAT, 2-layer GNNs with hypernetworks (GATGCN) and nmp-edge (nmp-edge with hypernetwork extension))
 * input- input files which consist of the parameters to be fed into train.py
 
 
